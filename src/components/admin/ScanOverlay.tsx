@@ -68,16 +68,22 @@ export default function ScanOverlay({ design, state, info, actions, preview, rep
     >
       {!showResult ? (
         <div className="scan-intro" key={replay} role="status" aria-label="Ticket wird geprüft">
-          <span className="scan-ring" aria-hidden="true" />
-          <span className="scan-ring is-delayed" aria-hidden="true" />
-          {design.showLogo ? <img className="scan-logo" src={scanLogo(design)} alt="" /> : <span className="scan-dot" aria-hidden="true" />}
+          <div className="scan-intro-stage">
+            <span className="scan-ring" aria-hidden="true" />
+            <span className="scan-ring is-delayed" aria-hidden="true" />
+            {design.showLogo ? <img className="scan-logo" src={scanLogo(design)} alt="" /> : <span className="scan-dot" aria-hidden="true" />}
+          </div>
           <span className="scan-intro-text">Ticket wird geprüft…</span>
         </div>
       ) : (
-        <div className={`scan-result is-${state}`} key={`${state}-${replay}`}>
-          {design.showLogo && <img className="scan-result-logo" src={scanLogo(design)} alt="" />}
-          <span className="scan-burst" aria-hidden="true">{state === "invalid" ? "✕" : state === "already" ? "!" : "✓"}</span>
-          <strong className="scan-title" role="status">{design.titles[state!]}</strong>
+        <div className="scan-stack" key={`${state}-${replay}`}>
+          {/* Logo sits above the card in its own row, so the card never covers it. */}
+          {design.showLogo && <img className="scan-card-logo" src={scanLogo(design)} alt="" />}
+          <div className={`scan-card is-${state}`}>
+          <div className="scan-card-head">
+            <span className="scan-burst" aria-hidden="true">{state === "invalid" ? "✕" : state === "already" ? "!" : "✓"}</span>
+            <strong className="scan-title" role="status">{design.titles[state!]}</strong>
+          </div>
           {info && (
             <>
               {(design.showCategory || info.number) && <span className="scan-sub">{[info.number, design.showCategory && info.category].filter(Boolean).join(" · ")}</span>}
@@ -90,6 +96,7 @@ export default function ScanOverlay({ design, state, info, actions, preview, rep
             </>
           )}
           {actions && <div className="scan-actions">{actions}</div>}
+          </div>
         </div>
       )}
     </div>

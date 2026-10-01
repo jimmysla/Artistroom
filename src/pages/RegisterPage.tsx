@@ -117,6 +117,9 @@ export default function RegisterPage() {
   const visible = visibleData(data, form);
   // A drafted category that was hidden in the meantime has to be chosen again.
   const categoryValid = enabledCategories(form).some((c) => c.id === data.category);
+  // The page background glows in the configured colour of the chosen category (theme purple if none).
+  const chosen = categories.find((c) => c.id === (submitted?.category ?? data.category) && (c.enabled || submitted));
+  const glowColor = formOpen && chosen ? chosen.color || "#8b5cf6" : "";
   useEffect(() => {
     if (event) document.title = `${event.name} – Anmeldung · ${eventDate(event)}, ${event.location}`;
   }, [event]);
@@ -223,6 +226,11 @@ export default function RegisterPage() {
 
   return (
     <div className="page">
+      <div
+        className={`category-glow ${glowColor ? "is-on" : ""}`}
+        style={glowColor ? ({ "--glow-color": glowColor } as CSSProperties) : undefined}
+        aria-hidden="true"
+      />
       <NoticeBar />
       <Hero onScrollDown={() => ctaRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })} />
 

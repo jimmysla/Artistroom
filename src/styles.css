@@ -193,6 +193,19 @@ a {
   padding: 32px 24px 88px;
   position: relative;
   text-align: center;
+  /* Graffiti background: darkened for readable text, fading into the page colour at the bottom. */
+  background:
+    linear-gradient(180deg, rgba(2, 2, 3, 0.35) 0%, rgba(2, 2, 3, 0.55) 70%, var(--bg) 100%),
+    url("/hero-bg.webp") center / cover no-repeat,
+    var(--bg);
+}
+@media (max-width: 800px) {
+  .hero {
+    background:
+      linear-gradient(180deg, rgba(2, 2, 3, 0.35) 0%, rgba(2, 2, 3, 0.55) 70%, var(--bg) 100%),
+      url("/hero-bg-800.webp") center / cover no-repeat,
+      var(--bg);
+  }
 }
 .hero-logo {
   margin: 0;
@@ -202,7 +215,8 @@ a {
 .hero-logo img {
   width: min(440px, 78vw);
   height: auto;
-  mix-blend-mode: lighten;
+  /* Transparent logo (logo-hero-*) – no black box on the background image. */
+  filter: drop-shadow(0 6px 28px rgba(0, 0, 0, 0.55));
 }
 .hero-meta {
   margin: 0;

@@ -10,7 +10,7 @@ import { logError } from "./http.js";
  */
 const MAX_FAILURES = 5;
 const WINDOW_MS = 15 * 60 * 1000;
-const LOCK_MS = 15 * 60 * 1000;
+const LOCK_MS = 2 * 60 * 1000;
 
 interface Attempts {
   failures: number[];

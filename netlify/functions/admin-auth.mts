@@ -44,15 +44,15 @@ export default async (req: Request) => {
       if (await lockedUntil(name)) {
         await logAction({ username: null, action: "login_gesperrt", target: username.trim().slice(0, 60), details: "Zu viele Fehlversuche – Konto vorübergehend gesperrt" });
         await delay(800);
-        return error("Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen.", 429);
+        return error("Zu viele Fehlversuche. Bitte in 2 Minuten erneut versuchen.", 429);
       }
       const user = await checkCredentials(username, password);
       if (!user) {
         // Slow down brute-force attempts.
         const locked = await recordFailure(name);
-        await logAction({ username: null, action: "login_fehlgeschlagen", target: username.trim().slice(0, 60), details: locked ? "5 Fehlversuche – Login für 15 Minuten gesperrt" : null });
+        await logAction({ username: null, action: "login_fehlgeschlagen", target: username.trim().slice(0, 60), details: locked ? "5 Fehlversuche – Login für 2 Minuten gesperrt" : null });
         await delay(800);
-        return error(locked ? "Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen." : "Benutzername oder Passwort ist falsch.", locked ? 429 : 401);
+        return error(locked ? "Zu viele Fehlversuche. Bitte in 2 Minuten erneut versuchen." : "Benutzername oder Passwort ist falsch.", locked ? 429 : 401);
       }
       await clearFailures(name);
       await logAction({ username: user.username, action: "login" });

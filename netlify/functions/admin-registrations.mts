@@ -2,7 +2,7 @@ import type { Config, Context } from "@netlify/functions";
 import { desc, eq, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { eventSettings, registrations, surveyResponses, type Registration } from "../../db/schema.js";
-import { MAX_AMOUNT_CENTS, hasTicket, isFinalStatus, instagramUrl, tiktokUrl, categoryLabel, formatNet, formatRegistrationNumber, isStatus, statusLabel } from "../../shared/registration.js";
+import { MAX_AMOUNT_CENTS, hasTicket, isFinalStatus, instagramUrl, tiktokUrl, formatNet, formatRegistrationNumber, isStatus, statusLabel } from "../../shared/registration.js";
 import { checkCredentials, requireAdmin } from "../lib/auth.js";
 import { allowedProviders, isPaymentProvider, paymentPageUrl } from "../lib/payments.js";
 import { encryptLegacyRegistrations, openRegistration, openRegistrations } from "../lib/pii.js";
@@ -14,16 +14,17 @@ import { error, json, logError, readJson, str } from "../lib/http.js";
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 import { randomUUID } from "node:crypto";
-import { getEvent } from "../lib/event.js";
+import { getEvent, getRegistrationForm } from "../lib/event.js";
+import { categoryName, parseExtra, type FormCategory } from "../../shared/registration-form.js";
 import { buildStatusMail, checkMailConfig, sendMail, sendStatusMail, MailError } from "../lib/mail.js";
 
-function toCsv(rows: Registration[]): string {
+function toCsv(rows: Registration[], categories: FormCategory[]): string {
   const escape = (v: string) => {
     // Neutralise spreadsheet formula injection and quote every cell.
     const safe = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
     return `"${safe.replace(/"/g, '""')}"`;
   };
-  const header = ["Anmeldenummer", "Datum", "Künstlername", "Vorname", "Nachname", "E-Mail", "Instagram", "TikTok", "Eingeladen / empfohlen von", "Stadt", "Kategorie", "Status", "Betrag (EUR)", "Foto/Video-Einwilligung", "Check-in", "E-Mail versendet"];
+  const header = ["Anmeldenummer", "Datum", "Künstlername", "Vorname", "Nachname", "E-Mail", "Instagram", "TikTok", "Eingeladen / empfohlen von", "Stadt", "Kategorie", "Status", "Betrag (EUR)", "Foto/Video-Einwilligung", "Check-in", "E-Mail versendet", "Weitere Angaben"];
   const lines = rows.map((r) =>
     [
       formatRegistrationNumber(r.id),
@@ -36,12 +37,13 @@ function toCsv(rows: Registration[]): string {
       r.tiktok ? tiktokUrl(r.tiktok) : "",
       r.referredBy ?? "",
       r.city ?? "",
-      categoryLabel(r.category),
+      categoryName(r.category, categories),
       statusLabel(r.status),
       r.amountCents != null ? (r.amountCents / 100).toFixed(2).replace(".", ",") : "",
       r.mediaConsentAt ? new Date(r.mediaConsentAt).toISOString() : "",
       r.checkedInAt ? new Date(r.checkedInAt).toISOString() : "",
       r.emailSentAt ? new Date(r.emailSentAt).toISOString() : "",
+      Object.values(parseExtra(r.extraFields)).map((a) => `${a.label}: ${a.value}`).join(" | "),
     ]
       .map(escape)
       .join(";"),
@@ -118,7 +120,7 @@ export default async (req: Request, context: Context) => {
       if (isCsv) {
         await logAction({ username: actor, action: "csv_export", details: `${rows.length} Anmeldung(en)` });
         const date = new Date().toISOString().slice(0, 10);
-        return new Response(toCsv(rows), {
+        return new Response(toCsv(rows, (await getRegistrationForm()).categories), {
           headers: {
             "Content-Type": "text/csv; charset=utf-8",
             "Content-Disposition": `attachment; filename="artistroom-anmeldungen-${date}.csv"`,
@@ -215,7 +217,7 @@ export default async (req: Request, context: Context) => {
       if (!deleted) return error("Anmeldung nicht gefunden.", 404);
       // Deleted people vanish from the log entirely; the deletion itself is noted without personal data.
       await purgeRegistrationLog(deleted.id);
-      await logAction({ username: actor, action: "anmeldung_geloescht", target: formatRegistrationNumber(deleted.id), details: `${categoryLabel(deleted.category)} · Anmeldung und alle zugehörigen Log-Einträge endgültig gelöscht` });
+      await logAction({ username: actor, action: "anmeldung_geloescht", target: formatRegistrationNumber(deleted.id), details: `${categoryName(deleted.category, (await getRegistrationForm()).categories)} · Anmeldung und alle zugehörigen Log-Einträge endgültig gelöscht` });
       return json({ ok: true });
     }
 

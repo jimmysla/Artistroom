@@ -1,5 +1,6 @@
 // Shared between the browser and Netlify Functions so client and server validate identically.
 
+/** Built-in default categories – the configured ones live in shared/registration-form.ts. */
 export const CATEGORIES = [
   { id: "teilnehmer", label: "Teilnehmer", description: "Ich möchte dabei sein", icon: "🎟️" },
   { id: "musiker", label: "Musiker", description: "Ich mache Musik", icon: "🎤" },
@@ -42,33 +43,12 @@ export const MAX_AMOUNT_CENTS = 1_000_000;
 
 export type StatusId = (typeof STATUSES)[number]["id"];
 
-export const categoryLabel = (id: string) => CATEGORIES.find((c) => c.id === id)?.label ?? id;
 export const statusLabel = (id: string) => STATUSES.find((s) => s.id === id)?.label ?? id;
 export const statusIcon = (id: string): string =>
   id === "angenommen" ? ACCEPTED_ICON : (STATUSES.find((s) => s.id === id)?.icon ?? "•");
 
-export const isCategory = (v: unknown): v is CategoryId =>
-  typeof v === "string" && CATEGORIES.some((c) => c.id === v);
 export const isStatus = (v: unknown): v is StatusId =>
   typeof v === "string" && STATUSES.some((s) => s.id === v);
-
-export interface RegistrationInput {
-  category: string;
-  firstName: string;
-  lastName: string;
-  /** Künstlername / Stagename – or the public name if the person has none. Stored in `name`. */
-  stageName: string;
-  email: string;
-  instagram: string;
-  tiktok: string;
-  referredBy: string;
-  city: string;
-}
-
-export type FieldErrors = Partial<Record<keyof RegistrationInput | "mediaConsent", string>>;
-
-/** Fields a person fills in on the data step, in form order. */
-export const DETAIL_FIELDS = ["firstName", "lastName", "stageName", "email", "instagram", "tiktok", "referredBy", "city"] as const;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const INSTAGRAM_RE = /^[a-zA-Z0-9._]{1,30}$/;
@@ -127,27 +107,6 @@ export function validateTiktok(tiktok: string): string | undefined {
   const v = normalizeTiktok(tiktok);
   if (!v) return;
   if (!TIKTOK_RE.test(v)) return "Bitte gib eine gültige TikTok-Profil-URL ein, z. B. tiktok.com/@deinname.";
-}
-
-/** Validates the data-step fields only (without category). */
-export function validateDetails(input: RegistrationInput): FieldErrors {
-  const checks: Record<(typeof DETAIL_FIELDS)[number], string | undefined> = {
-    firstName: validateFirstName(input.firstName),
-    lastName: validateLastName(input.lastName),
-    stageName: validateStageName(input.stageName),
-    email: validateEmail(input.email),
-    instagram: validateInstagram(input.instagram),
-    tiktok: validateTiktok(input.tiktok),
-    referredBy: validateReferredBy(input.referredBy),
-    city: validateCity(input.city),
-  };
-  return Object.fromEntries(Object.entries(checks).filter(([, v]) => v)) as FieldErrors;
-}
-
-export function validateRegistration(input: RegistrationInput): FieldErrors {
-  const errors = validateDetails(input);
-  if (!isCategory(input.category)) errors.category = "Bitte wähle eine Kategorie.";
-  return errors;
 }
 
 /** Human-facing registration number, e.g. 7 → "#0007". Derived from the auto-incrementing DB id. */

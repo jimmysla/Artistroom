@@ -2,7 +2,7 @@ import type { EventSettings, PublicEvent } from "../../shared/event";
 import type { MailTemplates } from "../../shared/mail-template";
 import type { Survey, SurveyAnswers } from "../../shared/survey";
 import type { Product } from "../../shared/product";
-import type { FieldErrors, RegistrationInput } from "../../shared/registration";
+import type { RegistrationForm, RegistrationValues } from "../../shared/registration-form";
 import type { AdminIdentity, Permission } from "../../shared/admin";
 import { SecureContextError, seal } from "./secure";
 
@@ -72,6 +72,8 @@ export interface Registration {
   tiktok: string | null;
   referredBy: string | null;
   city: string | null;
+  /** JSON of the custom form answers (see parseExtra). */
+  extraFields: string | null;
   status: string;
   mediaConsentAt: string | null;
   amountCents: number | null;
@@ -88,7 +90,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
-    public fieldErrors?: FieldErrors,
+    public fieldErrors?: Record<string, string>,
   ) {
     super(message);
   }
@@ -143,8 +145,11 @@ export const api = {
   places: (q: string, session: string) =>
     request<{ source: "google" | "osm"; suggestions: PlaceSuggestion[] }>(`/api/admin/places?${new URLSearchParams({ q, session })}`),
   checkin: (ticket: string, confirm = false) => request<{ registration: Registration; alreadyCheckedIn: boolean }>("/api/admin/checkin", { method: "POST", body: JSON.stringify({ ticket, confirm }) }),
-  register: (input: RegistrationInput & { mediaConsent: boolean; website?: string }) =>
+  register: (input: RegistrationValues & { mediaConsent: boolean; website?: string }) =>
     sealedRequest<{ ok: true; id: number }>("/api/registrations", "POST", { ...input }),
+
+  registrationForm: () => request<{ form: RegistrationForm }>("/api/admin/registration-form"),
+  saveRegistrationForm: (form: RegistrationForm) => request<{ form: RegistrationForm }>("/api/admin/registration-form", { method: "PUT", body: JSON.stringify({ form }) }),
 
   session: () => request<{ authenticated: boolean; user?: AdminIdentity }>("/api/admin/session"),
   login: (username: string, password: string) => sealedRequest<{ ok: true; user: AdminIdentity }>("/api/admin/login", "POST", { username, password }),

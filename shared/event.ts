@@ -6,7 +6,10 @@ export const DEFAULT_EVENT = {
   stripeSecretKey: "", paypalClientId: "", paypalClientSecret: "", paypalMode: "live",
 };
 export type EventSettings = typeof DEFAULT_EVENT;
-export type PublicEvent = Pick<EventSettings, "name" | "date" | "time" | "location" | "ticketPrice" | "welcomeText" | "welcomeImage">;
+export type PublicEvent = Pick<EventSettings, "name" | "date" | "time" | "location" | "ticketPrice" | "welcomeText" | "welcomeImage"> & {
+  /** Categories + data fields of the registration form (shared/registration-form.ts). */
+  registrationForm?: unknown;
+};
 export function eventDate(event: PublicEvent) {
   return `${new Date(`${event.date}T12:00:00`).toLocaleDateString("de-DE", { day: "numeric", month: "long", year: "numeric" })}${event.time ? ` · ${event.time} Uhr` : ""}`;
 }

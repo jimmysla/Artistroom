@@ -10,84 +10,62 @@ import Alert from "../components/Alert";
 import Footer from "../components/Footer";
 import { api, ApiError, REGISTRATION_CHANNEL } from "../lib/api";
 import { useReveal } from "../lib/useReveal";
-import { EventMeta, useEvent } from "../lib/event";
+import { EventMeta, useEvent, useRegistrationForm } from "../lib/event";
 import { eventDate, welcomeText } from "../../shared/event";
+import { MEDIA_CONSENT_TEXT, formatRegistrationNumber, normalizeInstagram, normalizeTiktok } from "../../shared/registration";
 import {
-  CATEGORIES,
-  MEDIA_CONSENT_TEXT,
-  categoryLabel,
-  formatRegistrationNumber,
-  DETAIL_FIELDS,
-  normalizeInstagram,
-  normalizeTiktok,
+  BUILTIN_SHORT,
+  EMPTY_VALUES,
+  categoryName,
+  inputFields,
+  isBuiltin,
   validateDetails,
-  type FieldErrors,
-  type RegistrationInput,
-} from "../../shared/registration";
+  type FormErrors,
+  type RegistrationForm,
+  type RegistrationValues,
+} from "../../shared/registration-form";
+import FormFieldInput from "../components/FormFieldInput";
 
 const STEP_LABELS = ["Kategorie", "Deine Daten", "Überprüfen", "Bestätigung"];
 const STORAGE_KEY = "artistroom-registration-draft";
-const EMPTY: RegistrationInput = {
-  category: "", firstName: "", lastName: "", stageName: "", email: "", instagram: "", tiktok: "", referredBy: "", city: "",
-};
 
-type DetailField = (typeof DETAIL_FIELDS)[number];
-
-const FIELDS: Record<DetailField, { label: string; placeholder: string; required?: boolean; type?: string; autoComplete: string; maxLength: number; hint?: string; raw?: boolean }> = {
-  firstName: { label: "Vorname", placeholder: "Dein Vorname", required: true, autoComplete: "given-name", maxLength: 100 },
-  lastName: { label: "Nachname", placeholder: "Dein Nachname", required: true, autoComplete: "family-name", maxLength: 100 },
-  stageName: {
-    label: "Künstlername / Stagename",
-    placeholder: "Dein Künstlername",
-    required: true,
-    autoComplete: "nickname",
-    maxLength: 100,
-    hint: "Kleiner Hinweis: Falls du keinen Künstlernamen nutzt, trage bitte deinen öffentlichen Namen ein.",
-  },
-  email: { label: "E-Mail-Adresse", placeholder: "deine@email.de", required: true, type: "email", autoComplete: "email", maxLength: 254 },
-  instagram: { label: "Instagram-Profil-URL", placeholder: "https://instagram.com/deinname", type: "url", autoComplete: "off", maxLength: 120, raw: true },
-  tiktok: { label: "TikTok-Profil-URL", placeholder: "https://tiktok.com/@deinname", type: "url", autoComplete: "off", maxLength: 120, raw: true },
-  referredBy: { label: "Von wem wurdest du eingeladen oder empfohlen?", placeholder: "Name der Person", autoComplete: "off", maxLength: 150 },
-  city: { label: "Aus welcher Stadt bist du?", placeholder: "z. B. Hamburg", required: true, autoComplete: "address-level2", maxLength: 100 },
-};
-
-/** Review / confirmation rows; social handles are shown as profile links. */
-function summaryRows(d: RegistrationInput): [string, string][] {
-  const ig = normalizeInstagram(d.instagram);
-  const tt = normalizeTiktok(d.tiktok);
-  return [
-    ["Vorname", d.firstName.trim()],
-    ["Nachname", d.lastName.trim()],
-    ["Künstlername / Stagename", d.stageName.trim()],
-    ["E-Mail", d.email.trim()],
-    ["Instagram", ig ? `instagram.com/${ig}` : "—"],
-    ["TikTok", tt ? `tiktok.com/@${tt}` : "—"],
-    ["Eingeladen / empfohlen von", d.referredBy.trim() || "—"],
-    ["Stadt", d.city.trim()],
-  ];
+/** Review / confirmation rows in form order; social handles are shown as profile links. */
+function summaryRows(d: RegistrationValues, form: Pick<RegistrationForm, "fields">): [string, string][] {
+  return inputFields(form).map((f): [string, string] => {
+    if (!isBuiltin(f.id)) {
+      const v = (d.extra[f.id] ?? "").trim();
+      return [f.label, f.type === "checkbox" ? (v === "ja" ? "Ja" : "Nein") : v || "—"];
+    }
+    const v = d[f.id].trim();
+    if (f.id === "instagram") return [BUILTIN_SHORT.instagram, normalizeInstagram(v) ? `instagram.com/${normalizeInstagram(v)}` : "—"];
+    if (f.id === "tiktok") return [BUILTIN_SHORT.tiktok, normalizeTiktok(v) ? `tiktok.com/@${normalizeTiktok(v)}` : "—"];
+    return [BUILTIN_SHORT[f.id], v || "—"];
+  });
 }
 
 // Keeps a draft in sessionStorage so an accidental reload doesn't wipe the form.
-function loadDraft(): RegistrationInput {
+function loadDraft(): RegistrationValues {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
-    return raw ? { ...EMPTY, ...JSON.parse(raw) } : EMPTY;
+    if (!raw) return EMPTY_VALUES;
+    const draft = JSON.parse(raw);
+    return { ...EMPTY_VALUES, ...draft, extra: draft.extra && typeof draft.extra === "object" ? draft.extra : {} };
   } catch {
-    return EMPTY;
+    return EMPTY_VALUES;
   }
 }
 
 export default function RegisterPage() {
   const [step, setStep] = useState(1);
-  const [data, setData] = useState<RegistrationInput>(loadDraft);
-  const [touched, setTouched] = useState<Partial<Record<keyof RegistrationInput, boolean>>>({});
-  const [serverErrors, setServerErrors] = useState<FieldErrors>({});
+  const [data, setData] = useState<RegistrationValues>(loadDraft);
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [serverErrors, setServerErrors] = useState<FormErrors>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [honeypot, setHoneypot] = useState("");
   const [mediaConsent, setMediaConsent] = useState(false);
   const [consentError, setConsentError] = useState(false);
-  const [submitted, setSubmitted] = useState<(RegistrationInput & { id: number }) | null>(null);
+  const [submitted, setSubmitted] = useState<(RegistrationValues & { id: number }) | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const formRef = useRef<HTMLElement>(null);
   const [ctaRef, ctaVisible] = useReveal<HTMLElement>(0.35);
@@ -95,6 +73,9 @@ export default function RegisterPage() {
   const [formOpen, setFormOpen] = useState(() => Boolean(data.category));
 
   const event = useEvent();
+  const form = useRegistrationForm();
+  // A drafted category that was removed in the meantime counts as not chosen.
+  const category = form.categories.some((c) => c.id === data.category) ? data.category : "";
   useEffect(() => {
     if (event) document.title = `${event.name} – Anmeldung · ${eventDate(event)}, ${event.location}`;
   }, [event]);
@@ -123,17 +104,16 @@ export default function RegisterPage() {
     });
   };
 
-  const clientErrors: FieldErrors = validateDetails(data);
-  const detailsValid = Object.keys(clientErrors).length === 0;
-  const errorFor = (field: keyof RegistrationInput) =>
-    serverErrors[field] ?? (touched[field] ? clientErrors[field] : undefined);
+  const clientErrors = validateDetails(data, form);
+  const detailsValid = !Object.values(clientErrors).some(Boolean);
+  const errorFor = (field: string) => serverErrors[field] ?? (touched[field] ? clientErrors[field] : undefined);
 
-  const update = (field: keyof RegistrationInput, value: string) => {
-    setData((d) => ({ ...d, [field]: value }));
+  const update = (field: string, value: string) => {
+    setData((d) => (isBuiltin(field) || field === "category" ? { ...d, [field]: value } : { ...d, extra: { ...d.extra, [field]: value } }));
     setServerErrors((e) => ({ ...e, [field]: undefined }));
     setSubmitError(null);
   };
-  const touch = (field: keyof RegistrationInput) => setTouched((t) => ({ ...t, [field]: true }));
+  const touch = (field: string) => setTouched((t) => ({ ...t, [field]: true }));
 
   const goBack = () => {
     if (step === 2 || step === 3) setStep(step - 1);
@@ -141,14 +121,15 @@ export default function RegisterPage() {
 
   const goToReview = (e: FormEvent) => {
     e.preventDefault();
-    setTouched(Object.fromEntries(DETAIL_FIELDS.map((f) => [f, true])));
-    if (!detailsValid || !data.category) return;
+    setTouched(Object.fromEntries(inputFields(form).map((f) => [f.id, true])));
+    if (!detailsValid || !category) return;
     setSubmitError(null);
     setStep(3);
   };
 
   const handleSubmit = async () => {
-    if (!detailsValid || !data.category) return setStep(2);
+    if (!category) return setStep(1);
+    if (!detailsValid) return setStep(2);
     if (!mediaConsent) return setConsentError(true);
 
     setSubmitting(true);
@@ -171,8 +152,9 @@ export default function RegisterPage() {
         if (err.fieldErrors) {
           setServerErrors(err.fieldErrors);
           // Errors on editable fields are fixed on the data step.
-          const { mediaConsent: consentMsg, ...rest } = err.fieldErrors;
-          if (Object.values(rest).some(Boolean)) setStep(2);
+          const { mediaConsent: consentMsg, category: categoryMsg, ...rest } = err.fieldErrors;
+          if (categoryMsg) setStep(1);
+          else if (Object.values(rest).some(Boolean)) setStep(2);
           else if (consentMsg) setConsentError(true);
         }
       } else {
@@ -184,7 +166,7 @@ export default function RegisterPage() {
   };
 
   const restart = () => {
-    setData(EMPTY);
+    setData(EMPTY_VALUES);
     setTouched({});
     setServerErrors({});
     setSubmitted(null);
@@ -213,23 +195,24 @@ export default function RegisterPage() {
         {step === 1 && (
           <section className="step" key="step-1">
             <h2 className="step-title" ref={headingRef} tabIndex={-1}>
-              Wer bist du?
+              {form.categoryTitle}
             </h2>
-            <p className="step-subtitle">Wähle deine Kategorie aus.</p>
+            {form.categoryIntro && <p className="step-subtitle">{form.categoryIntro}</p>}
             <div className="category-grid" role="radiogroup" aria-label="Kategorie">
-              {CATEGORIES.map((c, i) => (
+              {form.categories.map((c) => (
                 <CategoryCard
                   key={c.id}
                   label={c.label}
                   description={c.description}
                   icon={c.icon}
-                  wide={i === 0}
-                  selected={data.category === c.id}
+                  color={c.color}
+                  wide={c.wide}
+                  selected={category === c.id}
                   onSelect={() => update("category", c.id)}
                 />
               ))}
             </div>
-            <Button className="btn-block" disabled={!data.category} onClick={() => setStep(2)}>
+            <Button className="btn-block" disabled={!category} onClick={() => setStep(2)}>
               Weiter <span aria-hidden="true">→</span>
             </Button>
           </section>
@@ -238,40 +221,26 @@ export default function RegisterPage() {
         {step === 2 && (
           <section className="step" key="step-2">
             <h2 className="step-title" ref={headingRef} tabIndex={-1}>
-              Deine Daten
+              {form.detailsTitle}
             </h2>
-            <p className="step-subtitle">Erzähl uns kurz, wer du bist und wie wir dich erreichen.</p>
+            {form.detailsIntro && <p className="step-subtitle">{form.detailsIntro}</p>}
             <p className="selected-chip">
-              Kategorie: <strong>{categoryLabel(data.category)}</strong>
+              Kategorie: <strong>{categoryName(category, form.categories)}</strong>
               <button type="button" onClick={() => setStep(1)}>
                 ändern
               </button>
             </p>
             <form className="form" onSubmit={goToReview} noValidate>
-              {DETAIL_FIELDS.map((field) => {
-                const f = FIELDS[field];
-                return (
-                  <div key={field} className="form-field-group">
-                    <TextField
-                      label={f.label}
-                      required={f.required}
-                      optional={!f.required}
-                      type={f.type ?? "text"}
-                      inputMode={f.type === "email" ? "email" : f.type === "url" ? "url" : undefined}
-                      placeholder={f.placeholder}
-                      autoComplete={f.autoComplete}
-                      autoCapitalize={f.raw || f.type === "email" ? "none" : undefined}
-                      spellCheck={f.raw ? false : undefined}
-                      maxLength={f.maxLength}
-                      value={data[field]}
-                      error={errorFor(field)}
-                      onChange={(v) => update(field, v)}
-                      onBlur={() => touch(field)}
-                    />
-                    {f.hint && <p className="field-hint">{f.hint}</p>}
-                  </div>
-                );
-              })}
+              {form.fields.filter((f) => f.enabled).map((f) => (
+                <FormFieldInput
+                  key={f.id}
+                  field={f}
+                  value={isBuiltin(f.id) ? data[f.id] : (data.extra[f.id] ?? "")}
+                  error={errorFor(f.id)}
+                  onChange={(v) => update(f.id, v)}
+                  onBlur={() => touch(f.id)}
+                />
+              ))}
               {/* Honeypot – hidden from humans and assistive tech */}
               <input
                 className="hp-field"
@@ -307,9 +276,9 @@ export default function RegisterPage() {
             <dl className="summary">
               <div>
                 <dt>Kategorie</dt>
-                <dd>{categoryLabel(data.category)}</dd>
+                <dd>{categoryName(category, form.categories)}</dd>
               </div>
-              {summaryRows(data).map(([label, value]) => (
+              {summaryRows(data, form).map(([label, value]) => (
                 <div key={label}>
                   <dt>{label}</dt>
                   <dd>{value}</dd>
@@ -380,9 +349,9 @@ export default function RegisterPage() {
               </div>
               <div>
                 <dt>Kategorie</dt>
-                <dd>{categoryLabel(submitted.category)}</dd>
+                <dd>{categoryName(submitted.category, form.categories)}</dd>
               </div>
-              {summaryRows(submitted).filter(([, value]) => value !== "—").map(([label, value]) => (
+              {summaryRows(submitted, form).filter(([, value]) => value !== "—").map(([label, value]) => (
                 <div key={label}>
                   <dt>{label}</dt>
                   <dd>{value}</dd>

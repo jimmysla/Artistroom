@@ -19,6 +19,7 @@ export type UndoData =
   | { kind: "user_created"; id: number }
   | { kind: "user_changed"; id: number; before: Partial<Pick<AdminUser, "permissions" | "isSuper" | "active" | "passwordHash">> }
   | { kind: "user_deleted"; row: AdminUser }
+  | { kind: "registration_form"; before: Record<string, unknown> | null }
   | { kind: "settings"; before: Partial<EventSettings> & { mailTemplates?: Record<string, unknown> | null; survey?: Record<string, unknown> | null; product?: Record<string, unknown> | null } };
 
 /** Permission needed to undo each kind (on top of "logging"). */
@@ -29,6 +30,7 @@ const PERMISSION: Record<UndoData["kind"], Permission | "super"> = {
   user_changed: "super",
   user_deleted: "super",
   settings: "einstellungen",
+  registration_form: "super",
 };
 
 /** Expected failure with a German message for the admin (HTTP status included). */
@@ -169,6 +171,10 @@ export async function undoLogEntry(logId: number, admin: AdminIdentity, options:
         await tx.insert(adminUsers).values(row);
         await tx.execute(sql`select setval(pg_get_serial_sequence('admin_users', 'id'), greatest((select max(id) from admin_users), (select last_value from admin_users_id_seq)))`);
         return { target: row.username, registrationId: null, details: "Gelöschtes Konto wiederhergestellt", message: `Konto „${row.username}“ wiederhergestellt.` };
+      }
+      case "registration_form": {
+        await tx.update(eventSettings).set({ registrationForm: undo.before }).where(eq(eventSettings.id, 1));
+        return { target: null, registrationId: null, details: "Anmeldeformular auf den vorherigen Stand zurückgesetzt", message: "Anmeldeformular zurückgesetzt – die Anmeldeseite zeigt wieder die vorherigen Kategorien und Felder." };
       }
       case "settings": {
         await tx.update(eventSettings).set(undo.before).where(eq(eventSettings.id, 1));

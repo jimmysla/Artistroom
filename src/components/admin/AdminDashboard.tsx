@@ -6,6 +6,7 @@ import SurveyResults from "./SurveyResults";
 import CartSettings from "./CartSettings";
 import AuditLog from "./AuditLog";
 import UserManagement from "./UserManagement";
+import RegistrationFormSettings from "./RegistrationFormSettings";
 import { can, type AdminIdentity, type Permission } from "../../../shared/admin";
 import { EventMeta } from "../../lib/event";
 import Button from "../Button";
@@ -16,7 +17,9 @@ import RegistrationList from "./RegistrationList";
 import RegistrationDetail from "./RegistrationDetail";
 import ConfirmDialog from "./ConfirmDialog";
 import { api, ApiError, REGISTRATION_CHANNEL, type Registration } from "../../lib/api";
-import { CATEGORIES, STATUSES, formatRegistrationNumber, matchesStatus, ACCEPTED_ICON } from "../../../shared/registration";
+import { STATUSES, formatRegistrationNumber, matchesStatus, ACCEPTED_ICON } from "../../../shared/registration";
+import { categoriesInUse } from "../../../shared/registration-form";
+import { useCategories } from "../../lib/event";
 
 const POLL_MS = 5_000;
 
@@ -37,6 +40,7 @@ const TABS: { id: string; label: string; permission: Permission | "super" }[] = 
   { id: "checkin", label: "Check-in", permission: "checkin" },
   { id: "cart", label: "Warenkorb", permission: "einstellungen" },
   { id: "settings", label: "Einstellungen", permission: "einstellungen" },
+  { id: "anmeldung", label: "Anmeldung", permission: "super" },
   { id: "survey", label: "Umfrage", permission: "umfrage" },
   { id: "logging", label: "Logging", permission: "logging" },
   { id: "users", label: "Benutzer", permission: "super" },
@@ -51,6 +55,7 @@ export default function AdminDashboard({ user, onLoggedOut }: Props) {
   };
   const allowed = (p: Permission | "super") => (p === "super" ? user.isSuper : can(user, p));
   const tabs = TABS.filter((t) => allowed(t.permission));
+  const categories = useCategories();
   const needsRows = allowed("anmeldungen") || allowed("checkin");
   const [params, setParams] = useSearchParams();
   const requested = params.get("tab");
@@ -277,6 +282,7 @@ export default function AdminDashboard({ user, onLoggedOut }: Props) {
         </nav>
         {!tab ? <div className="card empty-state"><h2>Keine Berechtigungen</h2><p className="muted">Deinem Konto sind noch keine Bereiche freigegeben. Bitte wende dich an einen Super User.</p></div>
         : tab === "users" ? <UserManagement currentUser={username} onUnauthorized={onLoggedOut} />
+        : tab === "anmeldung" ? <RegistrationFormSettings onUnauthorized={onLoggedOut} />
         : tab === "logging" ? <AuditLog onUnauthorized={onLoggedOut} />
         : tab === "survey" ? <SurveyResults onUnauthorized={onLoggedOut} />
         : tab === "cart" ? <CartSettings onUnauthorized={onLoggedOut} />
@@ -363,7 +369,7 @@ export default function AdminDashboard({ user, onLoggedOut }: Props) {
                 <span className="sr-only">Kategorie</span>
                 <select className="input input-sm" value={category} onChange={(e) => setCategory(e.target.value)}>
                   <option value="">Alle Kategorien</option>
-                  {CATEGORIES.map((c) => (
+                  {categoriesInUse(categories, (rows ?? []).map((r) => r.category)).map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.label}
                     </option>

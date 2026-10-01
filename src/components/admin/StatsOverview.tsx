@@ -1,4 +1,6 @@
-import { CATEGORIES, formatNet, matchesStatus, statusIcon } from "../../../shared/registration";
+import { formatNet, matchesStatus, statusIcon } from "../../../shared/registration";
+import { categoriesInUse } from "../../../shared/registration-form";
+import { useCategories } from "../../lib/event";
 import type { Registration } from "../../lib/api";
 
 interface Props {
@@ -22,6 +24,7 @@ const TILES = [
 const SEGMENTS = ["kostenlos", "zahlung_angefordert", "bezahlt", "abgelehnt", "ausstehend"] as const;
 
 export default function StatsOverview({ rows, activeStatus, activeCategory, onSelectStatus, onSelectCategory }: Props) {
+  const categories = useCategories();
   const total = rows.length;
   const count = (id: string) => rows.filter((r) => matchesStatus(r.status, id)).length;
   const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
@@ -93,7 +96,7 @@ export default function StatsOverview({ rows, activeStatus, activeCategory, onSe
       </div>
 
       <div className="category-chips" role="group" aria-label="Kategorien">
-        {CATEGORIES.map((c) => (
+        {categoriesInUse(categories, rows.map((r) => r.category)).map((c) => (
           <button
             key={c.id}
             className={`category-chip ${activeCategory === c.id ? "is-active" : ""}`}

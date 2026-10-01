@@ -3,7 +3,9 @@ import Modal from "../Modal";
 import Button from "../Button";
 import StatusBadge from "./StatusBadge";
 import StatusActions from "./StatusActions";
-import { CATEGORIES, formatRegistrationNumber, instagramUrl, tiktokUrl, isFinalStatus } from "../../../shared/registration";
+import { formatRegistrationNumber, instagramUrl, tiktokUrl, isFinalStatus } from "../../../shared/registration";
+import { findCategory, parseExtra } from "../../../shared/registration-form";
+import { useCategories } from "../../lib/event";
 import { formatDateTime, type Registration } from "../../lib/api";
 
 interface Props {
@@ -15,16 +17,17 @@ interface Props {
 }
 
 export default function RegistrationDetail({ registration: r, onClose, onDelete, onStatusChange }: Props) {
-  const category = CATEGORIES.find((c) => c.id === r.category);
+  const category = findCategory(r.category, useCategories());
+  const extra = Object.entries(parseExtra(r.extraFields));
 
   return (
     <Modal title="Anmeldung" onClose={onClose}>
       <div className="detail-hero">
-        <span className="detail-icon" aria-hidden="true">{category?.icon ?? "🎟️"}</span>
+        <span className="detail-icon" aria-hidden="true">{category.icon}</span>
         <div>
           <p className="detail-name">{r.name}</p>
           <p className="muted small">
-            {[r.firstName, r.lastName].filter(Boolean).join(" ") || "Künstlername"} · {category?.label ?? r.category}
+            {[r.firstName, r.lastName].filter(Boolean).join(" ") || "Künstlername"} · {category.label}
           </p>
         </div>
         <StatusBadge status={r.status} amountCents={r.amountCents} />
@@ -80,6 +83,12 @@ export default function RegistrationDetail({ registration: r, onClose, onDelete,
             )}
           </dd>
         </div>
+        {extra.map(([id, a]) => (
+          <div key={id}>
+            <dt>{a.label}</dt>
+            <dd className="pre-wrap">{a.value}</dd>
+          </div>
+        ))}
         <div>
           <dt>Foto/Video</dt>
           <dd>{r.mediaConsentAt ? `Eingewilligt am ${formatDateTime(r.mediaConsentAt)}` : "—"}</dd>

@@ -1,19 +1,23 @@
+import type React from "react";
 interface Props {
   label: string;
   description: string;
   icon: string;
+  /** Category colour (selection highlight). */
+  color?: string;
   selected: boolean;
   wide?: boolean;
   onSelect: () => void;
 }
 
-export default function CategoryCard({ label, description, icon, selected, wide, onSelect }: Props) {
+export default function CategoryCard({ label, description, icon, color, selected, wide, onSelect }: Props) {
   return (
     <button
       type="button"
       role="radio"
       aria-checked={selected}
       className={`category-card ${selected ? "is-selected" : ""} ${wide ? "is-wide" : ""}`}
+      style={color ? ({ "--cat-color": color } as React.CSSProperties) : undefined}
       onClick={onSelect}
     >
       <span className="category-icon" aria-hidden="true">

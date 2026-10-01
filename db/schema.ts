@@ -19,6 +19,8 @@ export const registrations = pgTable(
     tiktok: text(),
     referredBy: text("referred_by"),
     city: text(),
+    // Answers of the custom form fields (shared/registration-form.ts), JSON, stored encrypted.
+    extraFields: text("extra_fields"),
     status: text().notNull().default("ausstehend"),
     // Requested / paid amount in euro cents; only set for "zahlung_angefordert" and "bezahlt".
     amountCents: integer("amount_cents"),
@@ -94,6 +96,8 @@ export const eventSettings = pgTable("event_settings", {
   surveySentAt: timestamp("survey_sent_at", { withTimezone: true }),
   // Status mail templates + design (shared/mail-template.ts); null = defaults.
   mailTemplates: jsonb("mail_templates").$type<Record<string, unknown>>(),
+  // Registration form Baukasten: categories, data fields, check-in animation (shared/registration-form.ts); null = defaults.
+  registrationForm: jsonb("registration_form").$type<Record<string, unknown>>(),
 });
 
 // Server-generated keys (transport RSA key pair, fallback encryption key, challenge HMAC key).

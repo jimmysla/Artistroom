@@ -42,6 +42,7 @@ export const LOG_ACTIONS = [
   { id: "alle_anmeldungen_geloescht", label: "Alle Anmeldungen gelöscht" },
   { id: "csv_export", label: "CSV-Export" },
   { id: "einstellungen_geaendert", label: "Einstellungen geändert" },
+  { id: "anmeldeformular_geaendert", label: "Anmeldeformular geändert" },
   { id: "testmail_gesendet", label: "Test-E-Mail gesendet" },
   { id: "bestaetigung_gesendet", label: "Eingangsbestätigung gesendet" },
   { id: "bestaetigung_fehlgeschlagen", label: "Eingangsbestätigung fehlgeschlagen" },

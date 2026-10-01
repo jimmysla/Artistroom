@@ -1,6 +1,6 @@
-import { lt, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { auditLog } from "../../db/schema.js";
+import { auditLog, registrations } from "../../db/schema.js";
 import type { UndoData } from "./undo.js";
 import { open, seal } from "./crypto.js";
 
@@ -40,11 +40,34 @@ export async function logAction(entry: Entry): Promise<void> {
   }
 }
 
-/** Deletes log entries older than the retention period. Returns the number of removed entries. */
+/**
+ * Deleted people must vanish from the log completely: removes every entry about the given
+ * registration (or, without id, about any registration – used by the reset).
+ */
+export async function purgeRegistrationLog(id?: number): Promise<number> {
+  const removed = await db
+    .delete(auditLog)
+    .where(id === undefined ? isNotNull(auditLog.registrationId) : eq(auditLog.registrationId, id))
+    .returning({ id: auditLog.id });
+  return removed.length;
+}
+
+/**
+ * Deletes log entries older than the retention period, plus leftovers of deleted registrations
+ * (entries of registrations that no longer exist and old undo snapshots of deleted rows).
+ * Returns the number of entries removed because of their age.
+ */
 export async function pruneAuditLog(): Promise<number> {
   const removed = await db
     .delete(auditLog)
     .where(lt(auditLog.createdAt, sql`now() - make_interval(days => ${LOG_RETENTION_DAYS})`))
     .returning({ id: auditLog.id });
+  await db
+    .delete(auditLog)
+    .where(and(isNotNull(auditLog.registrationId), sql`not exists (select 1 from ${registrations} where ${registrations.id} = ${auditLog.registrationId})`));
+  await db
+    .update(auditLog)
+    .set({ undo: null })
+    .where(and(isNotNull(auditLog.undo), inArray(sql`${auditLog.undo}->>'kind'`, ["registration_deleted", "all_registrations_deleted"])));
   return removed.length;
 }

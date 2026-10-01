@@ -2,10 +2,11 @@ import type { Config } from "@netlify/functions";
 import { eq, or, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { registrations, type Registration } from "../../db/schema.js";
-import { getEvent } from "../lib/event.js";
+import { formOf, getEvent } from "../lib/event.js";
 import { MailError, buildStatusMail, mailProvider, sendMail } from "../lib/mail.js";
 import { normalizeMailTemplates } from "../../shared/mail-template.js";
-import { categoryLabel, formatRegistrationNumber, normalizeInstagram, normalizeTiktok, validateRegistration } from "../../shared/registration.js";
+import { formatRegistrationNumber, normalizeInstagram, normalizeTiktok } from "../../shared/registration.js";
+import { builtinEnabled, categoryName, collectExtra, validateRegistration, type BuiltinField, type RegistrationValues } from "../../shared/registration-form.js";
 import { error, json, str, logError, crossSiteError, isCrossSite } from "../lib/http.js";
 import { TransportError, blindIndex, readSealed } from "../lib/crypto.js";
 import { openRegistration, sealRegistration } from "../lib/pii.js";
@@ -43,7 +44,8 @@ export default async (req: Request) => {
   // Honeypot: real users never fill this hidden field. Pretend success so bots don't retry.
   if (str(body.website)) return json({ ok: true }, 201);
 
-  const input = {
+  const extraRaw = body.extra && typeof body.extra === "object" && !Array.isArray(body.extra) ? (body.extra as Record<string, unknown>) : {};
+  const input: RegistrationValues = {
     category: str(body.category),
     firstName: str(body.firstName).trim(),
     lastName: str(body.lastName).trim(),
@@ -53,15 +55,21 @@ export default async (req: Request) => {
     tiktok: str(body.tiktok),
     referredBy: str(body.referredBy).trim(),
     city: str(body.city).trim(),
+    extra: Object.fromEntries(Object.entries(extraRaw).slice(0, 60).map(([k, v]) => [k, str(v)])),
   };
 
-  const fieldErrors = validateRegistration(input);
+  // Categories and fields come from the Baukasten (Dashboard → Anmeldung).
+  const form = formOf(await getEvent().catch(() => ({})));
+  const fieldErrors = validateRegistration(input, form);
   if (body.mediaConsent !== true) {
     fieldErrors.mediaConsent = "Bitte bestätige die Einwilligung zu Foto- und Videoaufnahmen.";
   }
-  if (Object.keys(fieldErrors).length > 0) {
+  if (Object.values(fieldErrors).some(Boolean)) {
     return error("Bitte überprüfe deine Eingaben.", 422, { fieldErrors });
   }
+  // Values of hidden fields are never stored.
+  const shown = (id: BuiltinField, value: string | null) => (builtinEnabled(form, id) ? value || null : null);
+  const extra = collectExtra(input, form);
 
   try {
     const [existing] = await db
@@ -82,13 +90,14 @@ export default async (req: Request) => {
       .values({
         ...(await sealRegistration({
           name: input.stageName,
-          firstName: input.firstName,
-          lastName: input.lastName,
+          firstName: shown("firstName", input.firstName),
+          lastName: shown("lastName", input.lastName),
           email: input.email,
-          instagram: normalizeInstagram(input.instagram) || null,
-          tiktok: normalizeTiktok(input.tiktok) || null,
-          referredBy: input.referredBy || null,
-          city: input.city,
+          instagram: shown("instagram", normalizeInstagram(input.instagram)),
+          tiktok: shown("tiktok", normalizeTiktok(input.tiktok)),
+          referredBy: shown("referredBy", input.referredBy),
+          city: shown("city", input.city),
+          extraFields: Object.keys(extra).length ? JSON.stringify(extra) : null,
         })),
         category: input.category,
         mediaConsentAt: new Date(),
@@ -100,7 +109,7 @@ export default async (req: Request) => {
       username: null,
       action: "anmeldung_eingegangen",
       target: `${formatRegistrationNumber(created.id)} · ${input.stageName}`,
-      details: `${categoryLabel(input.category)} · ${input.firstName} ${input.lastName} · ${input.city}${input.referredBy ? ` · empfohlen von ${input.referredBy}` : ""}`,
+      details: [categoryName(input.category, form.categories), [created.firstName, created.lastName].filter(Boolean).join(" "), created.city, created.referredBy && `empfohlen von ${created.referredBy}`].filter(Boolean).join(" · "),
       registrationId: created.id,
     });
     await sendConfirmation(created);

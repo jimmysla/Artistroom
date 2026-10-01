@@ -10,8 +10,8 @@ export default function Hero({ onScrollDown }: Props) {
     <header className="hero">
       <h1 className="hero-logo">
         <img
-          src="/logo-640.webp"
-          srcSet="/logo-640.webp 640w, /logo-1200.webp 1200w"
+          src="/logo-hero-640.webp"
+          srcSet="/logo-hero-640.webp 640w, /logo-hero-1200.webp 1200w"
           sizes="(max-width: 600px) 78vw, 440px"
           width="440"
           height="440"

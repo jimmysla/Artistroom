@@ -1,4 +1,6 @@
-import { categoryLabel, formatRegistrationNumber, instagramUrl, tiktokUrl, isFinalStatus } from "../../../shared/registration";
+import { formatRegistrationNumber, instagramUrl, tiktokUrl, isFinalStatus } from "../../../shared/registration";
+import { categoryName } from "../../../shared/registration-form";
+import { useCategories } from "../../lib/event";
 import { formatDateTime, type Registration } from "../../lib/api";
 import StatusBadge from "./StatusBadge";
 import StatusActions from "./StatusActions";
@@ -11,6 +13,8 @@ interface Props {
   onStatusChange?: (r: Registration, status: string, amountCents?: number) => Promise<void>;
 }
 export default function RegistrationList({ rows, freshIds, onOpen, onDelete, onStatusChange }: Props) {
+  const categories = useCategories();
+  const categoryLabel = (id: string) => categoryName(id, categories);
   return <ul className="participant-list">{rows.map(r => <li key={r.id} className={`participant-row status-bar-${r.status}`}>
     <div className="participant-number">{formatRegistrationNumber(r.id)}{freshIds.has(r.id) && <span className="new-pill">Neu</span>}</div>
     <div className="participant-info"><button className="participant-name" onClick={() => onOpen(r)}>{r.name}</button>{(r.firstName || r.lastName) && <span className="participant-realname">{[r.firstName, r.lastName].filter(Boolean).join(" ")}</span>}<span>{categoryLabel(r.category)}{r.city && ` · ${r.city}`}{r.referredBy && ` · empfohlen von ${r.referredBy}`}</span><span className="participant-links"><a className="mail-link" href={`mailto:${r.email}`}>{r.email}</a>{r.instagram && <a href={instagramUrl(r.instagram)} target="_blank" rel="noopener noreferrer">IG @{r.instagram}</a>}{r.tiktok && <a href={tiktokUrl(r.tiktok)} target="_blank" rel="noopener noreferrer">TikTok @{r.tiktok}</a>}</span></div>

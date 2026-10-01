@@ -6,7 +6,8 @@ import { parseEuroToCents, validateEmail } from "../../shared/registration.js";
 import { requireAdmin } from "../lib/auth.js";
 import { logAction } from "../lib/audit.js";
 import { TransportError, readSealed, seal } from "../lib/crypto.js";
-import { getEvent } from "../lib/event.js";
+import { formOf, getEvent } from "../lib/event.js";
+import { publicForm } from "../../shared/registration-form.js";
 import { describeProductChanges, describeSurveyChanges, describeTemplateChanges } from "../lib/diff.js";
 import { createTestCheckout } from "../lib/test-checkout.js";
 import { PAYMENT_PROVIDERS, PaymentError, isPaymentProvider, paymentCredentials, providerConfigured, testProvider } from "../lib/payments.js";
@@ -100,7 +101,7 @@ export default async (req: Request) => {
     }
     if (req.method === "GET") {
       const s = await getEvent();
-      return json(admin ? await forAdmin(s) : { settings: { name: s.name, date: s.date, time: s.time, location: s.location, ticketPrice: s.ticketPrice, welcomeText: s.welcomeText, welcomeImage: s.welcomeImage } });
+      return json(admin ? await forAdmin(s) : { settings: { name: s.name, date: s.date, time: s.time, location: s.location, ticketPrice: s.ticketPrice, welcomeText: s.welcomeText, welcomeImage: s.welcomeImage, registrationForm: publicForm(formOf(s)) } });
     }
     if (!session || req.method !== "PUT") return error("Methode nicht erlaubt.", 405);
     // Whole body (incl. SMTP password) arrives encrypted from the browser.

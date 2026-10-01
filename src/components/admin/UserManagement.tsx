@@ -38,6 +38,7 @@ function UserCard({ user, isSelf, onSaved, onDelete, onError }: { user: AdminAcc
   const [password, setPassword] = useState("");
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [busy, setBusy] = useState(false);
+  const [confirmDeactivate, setConfirmDeactivate] = useState(false);
   const dirty = isSuper !== user.isSuper || [...permissions].sort().join() !== [...user.permissions].sort().join();
 
   const save = async (patch: Parameters<typeof api.updateUser>[1], msg: string) => {
@@ -71,7 +72,7 @@ function UserCard({ user, isSelf, onSaved, onDelete, onError }: { user: AdminAcc
         </div>
         <div className="user-head-actions">
           {!isSelf && (
-            <Button variant="secondary" size="sm" disabled={busy} onClick={() => save({ active: !user.active }, user.active ? "Konto deaktiviert" : "Konto aktiviert")}>
+            <Button variant="secondary" size="sm" disabled={busy} onClick={() => (user.active ? setConfirmDeactivate(true) : void save({ active: true }, "Konto aktiviert"))}>
               {user.active ? "Deaktivieren" : "Aktivieren"}
             </Button>
           )}
@@ -110,6 +111,21 @@ function UserCard({ user, isSelf, onSaved, onDelete, onError }: { user: AdminAcc
           Passwort ändern
         </Button>
       </form>
+
+      {confirmDeactivate && (
+        <ConfirmDialog
+          title="Konto deaktivieren?"
+          confirmLabel="Deaktivieren"
+          loading={busy}
+          onCancel={() => setConfirmDeactivate(false)}
+          onConfirm={async () => {
+            await save({ active: false }, "Konto deaktiviert");
+            setConfirmDeactivate(false);
+          }}
+        >
+          <strong>{user.username}</strong> wird sofort abgemeldet und kann sich nicht mehr einloggen. Rechte und Passwort bleiben erhalten – mit „Aktivieren“ ist das Konto jederzeit wieder nutzbar.
+        </ConfirmDialog>
+      )}
     </li>
   );
 }
@@ -117,6 +133,7 @@ function UserCard({ user, isSelf, onSaved, onDelete, onError }: { user: AdminAcc
 export default function UserManagement({ currentUser, onUnauthorized }: Props) {
   const [users, setUsers] = useState<AdminAccount[] | null>(null);
   const [encryption, setEncryption] = useState<"env" | "db" | null>(null);
+  const [sessionSecret, setSessionSecret] = useState(true);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [toDelete, setToDelete] = useState<AdminAccount | null>(null);
@@ -127,6 +144,7 @@ export default function UserManagement({ currentUser, onUnauthorized }: Props) {
   const [passwordConfirm, setPasswordConfirm] = useState("");
   const [permissions, setPermissions] = useState<Permission[]>(["anmeldungen"]);
   const [isSuper, setIsSuper] = useState(false);
+  const [active, setActive] = useState(true);
   const [touched, setTouched] = useState(false);
   const [creating, setCreating] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
@@ -146,6 +164,7 @@ export default function UserManagement({ currentUser, onUnauthorized }: Props) {
       .then((r) => {
         setUsers(r.users);
         setEncryption(r.encryption);
+        setSessionSecret(r.sessionSecret);
       })
       .catch(handle);
   }, [handle]);
@@ -162,15 +181,16 @@ export default function UserManagement({ currentUser, onUnauthorized }: Props) {
     setCreating(true);
     setFieldErrors({});
     try {
-      const { user } = await api.createUser({ username: username.trim(), password, passwordConfirm, permissions, isSuper });
+      const { user } = await api.createUser({ username: username.trim(), password, passwordConfirm, permissions, isSuper, active });
       setUsers((u) => [...(u ?? []), user]);
       setUsername("");
       setPassword("");
       setPasswordConfirm("");
       setPermissions(["anmeldungen"]);
       setIsSuper(false);
+      setActive(true);
       setTouched(false);
-      done(`Konto „${user.username}“ erstellt`);
+      done(`Konto „${user.username}“ erstellt${user.active ? "" : " (deaktiviert)"}`);
     } catch (err) {
       if (err instanceof ApiError && err.fieldErrors) setFieldErrors(err.fieldErrors);
       handle(err);
@@ -194,6 +214,26 @@ export default function UserManagement({ currentUser, onUnauthorized }: Props) {
     }
   };
 
+  const activeUsers = users?.filter((u) => u.active) ?? [];
+  const inactiveUsers = users?.filter((u) => !u.active) ?? [];
+  const renderList = (list: AdminAccount[]) => (
+    <ul className="user-list">
+      {list.map((u) => (
+        <UserCard
+          key={`${u.id}-${u.isSuper}-${u.permissions.join()}`}
+          user={u}
+          isSelf={u.username === currentUser}
+          onSaved={(updated, msg) => {
+            setUsers((all) => all?.map((x) => (x.id === updated.id ? updated : x)) ?? null);
+            done(`${updated.username}: ${msg}`);
+          }}
+          onDelete={() => setToDelete(u)}
+          onError={handle}
+        />
+      ))}
+    </ul>
+  );
+
   return (
     <section className="users-panel">
       <h1>Benutzerverwaltung</h1>
@@ -201,8 +241,26 @@ export default function UserManagement({ currentUser, onUnauthorized }: Props) {
 
       {encryption && (
         <p className="encryption-note is-on">
-          🔒 Alles Sensible ist verschlüsselt – egal wie lang: Passwörter (zusätzlich unumkehrbar gehasht), alle persönlichen Daten der Anmeldungen, Log-Einträge sowie die Zugangsdaten für Postfach, Stripe und PayPal. Auch die Übertragung aus dem Browser ist verschlüsselt. Du musst dafür nichts einstellen.
+          🔒 Alles Sensible ist verschlüsselt – egal wie lang: Passwörter (zusätzlich unumkehrbar gehasht), alle persönlichen Daten der Anmeldungen, Log-Einträge sowie die Zugangsdaten für Postfach, Stripe und PayPal. Auch die Übertragung aus dem Browser ist verschlüsselt.
         </p>
+      )}
+      {(encryption === "db" || (encryption && !sessionSecret)) && (
+        <div className="info-box" role="alert">
+          <strong>⚠️ Sicherheits-Schlüssel fehlen noch</strong>
+          <ul>
+            {encryption === "db" && (
+              <li>
+                <code>PASSWORD_ENCRYPTION_KEY</code> ist nicht gesetzt – der Schlüssel liegt bisher in derselben Datenbank wie die verschlüsselten Daten. Lege ihn in Netlify unter <b>Project configuration → Environment variables</b> als Secret an (mind. 32 zufällige Zeichen, z. B. <code>openssl rand -base64 48</code>) und bewahre eine Kopie sicher auf. <b>Danach nie wieder ändern oder löschen</b> – sonst sind die Daten nicht mehr lesbar. Vorhandene Daten werden danach automatisch neu verschlüsselt.
+              </li>
+            )}
+            {!sessionSecret && (
+              <li>
+                <code>SESSION_SECRET</code> ist nicht gesetzt. Ebenfalls als Secret anlegen (mind. 32 zufällige Zeichen) – dann kann niemand allein mit der Datenbank Logins fälschen. Beim ersten Setzen werden alle einmal abgemeldet.
+              </li>
+            )}
+            <li>Nach dem Setzen einmal neu deployen.</li>
+          </ul>
+        </div>
       )}
       {error && <Alert>{error}</Alert>}
       {message && <Alert tone="success">{message}</Alert>}
@@ -232,30 +290,35 @@ export default function UserManagement({ currentUser, onUnauthorized }: Props) {
         </label>
         <p className="field-label">Freigaben</p>
         <PermissionPicker value={permissions} onChange={setPermissions} disabled={isSuper} />
+        <label className="perm-option perm-super">
+          <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
+          <span>
+            Konto sofort aktiv
+            <small>Ohne Haken wird das Konto deaktiviert angelegt und kann sich erst nach „Aktivieren“ einloggen.</small>
+          </span>
+        </label>
         <Button type="submit" size="md" loading={creating}>
           Konto erstellen
         </Button>
       </form>
 
-      <h2>Alle Konten{users && ` (${users.length})`}</h2>
       {!users ? (
-        !error && <p role="status">Konten werden geladen…</p>
+        <>
+          <h2>Konten</h2>
+          {!error && <p role="status">Konten werden geladen…</p>}
+        </>
       ) : (
-        <ul className="user-list">
-          {users.map((u) => (
-            <UserCard
-              key={`${u.id}-${u.isSuper}-${u.permissions.join()}`}
-              user={u}
-              isSelf={u.username === currentUser}
-              onSaved={(updated, msg) => {
-                setUsers((list) => list?.map((x) => (x.id === updated.id ? updated : x)) ?? null);
-                done(`${updated.username}: ${msg}`);
-              }}
-              onDelete={() => setToDelete(u)}
-              onError={handle}
-            />
-          ))}
-        </ul>
+        <>
+          <h2>Aktive Konten ({activeUsers.length})</h2>
+          {renderList(activeUsers)}
+          {inactiveUsers.length > 0 && (
+            <>
+              <h2>Deaktivierte Konten ({inactiveUsers.length})</h2>
+              <p className="muted small">Können sich nicht einloggen. Mit „Aktivieren“ sind sie sofort wieder nutzbar.</p>
+              {renderList(inactiveUsers)}
+            </>
+          )}
+        </>
       )}
 
       {toDelete && (

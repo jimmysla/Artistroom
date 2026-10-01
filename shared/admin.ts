@@ -18,6 +18,8 @@ export interface AdminIdentity {
   username: string;
   isSuper: boolean;
   permissions: Permission[];
+  /** Account still uses a seeded password → must set a new one before anything else. */
+  mustChangePassword?: boolean;
 }
 
 export const can = (user: AdminIdentity, permission: Permission) => user.isSuper || user.permissions.includes(permission);
@@ -27,6 +29,8 @@ export const LOG_ACTIONS = [
   { id: "login", label: "Login" },
   { id: "login_fehlgeschlagen", label: "Login fehlgeschlagen" },
   { id: "login_gesperrt", label: "Login gesperrt (zu viele Fehlversuche)" },
+  { id: "login_deaktiviert", label: "Login eines deaktivierten Kontos" },
+  { id: "passwort_geaendert", label: "Eigenes Passwort geändert" },
   { id: "logout", label: "Logout" },
   { id: "anmeldung_eingegangen", label: "Neue Anmeldung" },
   { id: "status_geaendert", label: "Status geändert" },
@@ -38,6 +42,7 @@ export const LOG_ACTIONS = [
   { id: "alle_anmeldungen_geloescht", label: "Alle Anmeldungen gelöscht" },
   { id: "csv_export", label: "CSV-Export" },
   { id: "einstellungen_geaendert", label: "Einstellungen geändert" },
+  { id: "anmeldeformular_geaendert", label: "Anmeldeformular geändert" },
   { id: "testmail_gesendet", label: "Test-E-Mail gesendet" },
   { id: "bestaetigung_gesendet", label: "Eingangsbestätigung gesendet" },
   { id: "bestaetigung_fehlgeschlagen", label: "Eingangsbestätigung fehlgeschlagen" },

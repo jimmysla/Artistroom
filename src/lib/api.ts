@@ -2,7 +2,7 @@ import type { EventSettings, PublicEvent } from "../../shared/event";
 import type { MailTemplates } from "../../shared/mail-template";
 import type { Survey, SurveyAnswers } from "../../shared/survey";
 import type { Product } from "../../shared/product";
-import type { FieldErrors, RegistrationInput } from "../../shared/registration";
+import type { RegistrationForm, RegistrationValues } from "../../shared/registration-form";
 import type { AdminIdentity, Permission } from "../../shared/admin";
 import { SecureContextError, seal } from "./secure";
 
@@ -72,6 +72,8 @@ export interface Registration {
   tiktok: string | null;
   referredBy: string | null;
   city: string | null;
+  /** JSON of the custom form answers (see parseExtra). */
+  extraFields: string | null;
   status: string;
   mediaConsentAt: string | null;
   amountCents: number | null;
@@ -84,11 +86,17 @@ export interface Registration {
   paymentRef: string | null;
 }
 
+/** Where the login runs: deploy previews use a copy of the live data. */
+export interface LoginEnvironment {
+  preview: boolean;
+  liveUrl: string;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
-    public fieldErrors?: FieldErrors,
+    public fieldErrors?: Record<string, string>,
   ) {
     super(message);
   }
@@ -143,12 +151,23 @@ export const api = {
   places: (q: string, session: string) =>
     request<{ source: "google" | "osm"; suggestions: PlaceSuggestion[] }>(`/api/admin/places?${new URLSearchParams({ q, session })}`),
   checkin: (ticket: string, confirm = false) => request<{ registration: Registration; alreadyCheckedIn: boolean }>("/api/admin/checkin", { method: "POST", body: JSON.stringify({ ticket, confirm }) }),
-  register: (input: RegistrationInput & { mediaConsent: boolean; website?: string }) =>
+  register: (input: RegistrationValues & { mediaConsent: boolean; website?: string }) =>
     sealedRequest<{ ok: true; id: number }>("/api/registrations", "POST", { ...input }),
 
-  session: () => request<{ authenticated: boolean; user?: AdminIdentity }>("/api/admin/session"),
+  registrationForm: () => request<{ form: RegistrationForm }>("/api/admin/registration-form"),
+  saveRegistrationForm: (form: RegistrationForm) => request<{ form: RegistrationForm }>("/api/admin/registration-form", { method: "PUT", body: JSON.stringify({ form }) }),
+
+  session: () => request<{ authenticated: boolean; user?: AdminIdentity; environment?: LoginEnvironment }>("/api/admin/session"),
+  /** Like session(), but a 401 (logged out) still returns the environment info for the login page. */
+  loginEnvironment: () =>
+    fetch("/api/admin/session", { credentials: "same-origin", cache: "no-store" })
+      .then((r) => r.json())
+      .then((d: { environment?: LoginEnvironment }) => d.environment ?? null)
+      .catch(() => null),
   login: (username: string, password: string) => sealedRequest<{ ok: true; user: AdminIdentity }>("/api/admin/login", "POST", { username, password }),
   logout: () => request<{ ok: true }>("/api/admin/logout", { method: "POST" }),
+  changePassword: (currentPassword: string, password: string, passwordConfirm: string) =>
+    sealedRequest<{ ok: true; user: AdminIdentity }>("/api/admin/password", "POST", { currentPassword, password, passwordConfirm }),
 
   listRegistrations: () => request<{ registrations: Registration[] }>("/api/admin/registrations"),
   updateStatus: (id: number, revision: number, status: string, amountCents?: number) =>
@@ -164,8 +183,8 @@ export const api = {
   resetRegistrations: (confirm: string, username: string, password: string) =>
     sealedRequest<{ ok: true; deleted: number }>("/api/admin/registrations/reset", "POST", { confirm, username, password }),
 
-  listUsers: () => request<{ users: AdminAccount[]; encryption: "env" | "db" }>("/api/admin/users"),
-  createUser: (input: { username: string; password: string; passwordConfirm: string; permissions: Permission[]; isSuper: boolean }) =>
+  listUsers: () => request<{ users: AdminAccount[]; encryption: "env" | "db"; sessionSecret: boolean }>("/api/admin/users"),
+  createUser: (input: { username: string; password: string; passwordConfirm: string; permissions: Permission[]; isSuper: boolean; active: boolean }) =>
     sealedRequest<{ user: AdminAccount }>("/api/admin/users", "POST", input),
   updateUser: (id: number, patch: Partial<{ permissions: Permission[]; isSuper: boolean; active: boolean; password: string; passwordConfirm: string }>) =>
     sealedRequest<{ user: AdminAccount }>(`/api/admin/users/${id}`, "PATCH", patch),

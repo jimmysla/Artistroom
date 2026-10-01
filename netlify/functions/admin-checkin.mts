@@ -2,7 +2,9 @@ import type { Config } from "@netlify/functions";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { registrations, type Registration } from "../../db/schema.js";
-import { categoryLabel, formatRegistrationNumber, statusLabel } from "../../shared/registration.js";
+import { formatRegistrationNumber, statusLabel } from "../../shared/registration.js";
+import { categoryName } from "../../shared/registration-form.js";
+import { getRegistrationForm } from "../lib/event.js";
 import { requireAdmin } from "../lib/auth.js";
 import { logAction } from "../lib/audit.js";
 import { openRegistration } from "../lib/pii.js";
@@ -27,6 +29,8 @@ export default async (req: Request) => {
       return error("Kein gültiges Artistroom-Ticket.", 422);
     }
     const token = body.ticket.slice(11);
+    const categories = (await getRegistrationForm()).categories;
+    const categoryLabel = (id: string) => categoryName(id, categories);
     const found = await first(db.select().from(registrations).where(eq(registrations.ticketToken, token)));
     if (!found) {
       await log("qr_ungueltig", null, "Ticket nicht gefunden");

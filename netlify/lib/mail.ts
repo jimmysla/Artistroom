@@ -2,7 +2,9 @@ import QRCode from "qrcode";
 import type { Registration } from "../../db/schema.js";
 import type { EventSettings } from "../../shared/event.js";
 import { eventDate, validPaymentUrl } from "../../shared/event.js";
-import { categoryLabel, statusLabel, formatNet, formatRegistrationNumber } from "../../shared/registration.js";
+import { statusLabel, formatNet, formatRegistrationNumber } from "../../shared/registration.js";
+import { categoryName } from "../../shared/registration-form.js";
+import { formOf } from "./event.js";
 import nodemailer from "nodemailer";
 import { isTemplateStatus, normalizeMailTemplates, renderMail, type MailVars } from "../../shared/mail-template.js";
 import { open } from "./crypto.js";
@@ -89,7 +91,7 @@ export const mailVars = (row: Registration, settings: EventSettings): MailVars =
   vorname: row.firstName || row.name,
   name: row.name,
   nummer: formatRegistrationNumber(row.id),
-  kategorie: categoryLabel(row.category),
+  kategorie: categoryName(row.category, formOf(settings).categories),
   event: settings.name,
   datum: eventDate(settings),
   ort: settings.location,
@@ -120,7 +122,7 @@ export async function buildStatusMail(row: Registration, settings: SettingsWithT
   }
   const lines = [
     `Hallo ${row.firstName || row.name},`, `deine Anmeldung ${formatRegistrationNumber(row.id)}: ${statusLabel(row.status)}.`,
-    `${settings.name} · ${eventDate(settings)} · ${settings.location}`, `Kategorie: ${categoryLabel(row.category)}`,
+    `${settings.name} · ${eventDate(settings)} · ${settings.location}`, `Kategorie: ${categoryName(row.category, formOf(settings).categories)}`,
     "Deine Anmeldung wird erneut geprüft. Ein bisheriges Ticket ist bis zur Freigabe nicht gültig.",
   ];
   return { subject: `${settings.name}: ${statusLabel(row.status)} · ${formatRegistrationNumber(row.id)}`, text: lines.join("\n\n"), html: lines.map(l => `<p>${escape(l)}</p>`).join(""), attachments: undefined };

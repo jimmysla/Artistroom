@@ -1,5 +1,6 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { DEFAULT_EVENT, type PublicEvent, eventDate } from "../../shared/event";
+import { normalizeRegistrationForm, type RegistrationForm } from "../../shared/registration-form";
 import { api, EVENT_CHANNEL } from "./api";
 
 // How often open pages re-check the event settings, so admin changes show up without a reload.
@@ -44,3 +45,14 @@ export function EventMeta() {
   return <><time dateTime={event.date}>{eventDate(event)}</time> · {event.location}</>;
 }
 export function EventName() { return <>{useEvent()?.name ?? "\u00a0"}</>; }
+
+/** Configured registration form (categories, data fields); defaults until the event is loaded. */
+export function useRegistrationForm(): Omit<RegistrationForm, "checkin"> {
+  const raw = useEvent()?.registrationForm;
+  const key = JSON.stringify(raw ?? null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(() => normalizeRegistrationForm(raw), [key]);
+}
+
+/** Configured categories (for labels, emojis and colours in the dashboard). */
+export const useCategories = () => useRegistrationForm().categories;

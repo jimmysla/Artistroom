@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import AdminLogin from "../components/admin/AdminLogin";
 import AdminDashboard from "../components/admin/AdminDashboard";
+import ForcePasswordChange from "../components/admin/ForcePasswordChange";
 import Spinner from "../components/Spinner";
 import { api } from "../lib/api";
 import type { AdminIdentity } from "../../shared/admin";
@@ -38,6 +39,10 @@ export default function AdminPage() {
 
   if (auth.status === "guest") {
     return <AdminLogin onSuccess={(user) => setAuth({ status: "authed", user })} />;
+  }
+
+  if (auth.user.mustChangePassword) {
+    return <ForcePasswordChange user={auth.user} onDone={(user) => setAuth({ status: "authed", user })} onLogout={() => setAuth({ status: "guest" })} />;
   }
 
   return <AdminDashboard user={auth.user} onLoggedOut={() => setAuth({ status: "guest" })} />;

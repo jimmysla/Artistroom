@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserQRCodeReader, type IScannerControls } from "@zxing/browser";
 import { api, formatDateTime, type Registration } from "../../lib/api";
-import { CATEGORIES, categoryLabel, formatRegistrationNumber, hasTicket } from "../../../shared/registration";
+import { formatRegistrationNumber, hasTicket } from "../../../shared/registration";
+import { categoriesInUse, categoryName, findCategory, type CheckinDesign } from "../../../shared/registration-form";
+import { useCategories, useEvent } from "../../lib/event";
+import CheckinSplash from "./CheckinSplash";
 import Button from "../Button";
 export default function Checkin({ rows, refresh }: { rows: Registration[]; refresh: () => Promise<void> }) {
   const video = useRef<HTMLVideoElement>(null);
@@ -16,11 +19,25 @@ export default function Checkin({ rows, refresh }: { rows: Registration[]; refre
   const [success, setSuccess] = useState(false);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
+  // Check-in animation (Dashboard → Anmeldung); shown when a valid ticket is scanned.
+  const [design, setDesign] = useState<CheckinDesign | null>(null);
+  const [splash, setSplash] = useState<{ registration: Registration; state: "ready" | "already" } | null>(null);
+  const categories = useCategories();
+  const eventName = useEvent()?.name ?? "";
+  const categoryLabel = (id: string) => categoryName(id, categories);
+  // Ref too: the camera callback keeps the inspect() of the moment the camera was started.
+  const designRef = useRef<CheckinDesign | null>(null);
+  useEffect(() => { api.registrationForm().then(r => { designRef.current = r.form.checkin; setDesign(r.form.checkin); }).catch(() => setDesign(null)); }, []);
+  const closeSplash = useCallback(() => setSplash(null), []);
   const stop = () => { session.current++; controls.current?.stop(); controls.current = null; setCamera(false); };
   useEffect(() => { const hide = () => { if (document.hidden) stop(); }; document.addEventListener("visibilitychange", hide); return () => { session.current++; controls.current?.stop(); document.removeEventListener("visibilitychange", hide); }; }, []);
   async function inspect(value: string) {
     stop(); setTicket(value); setBusy(true); setError(""); setResult(null); setSuccess(false);
-    try { setResult(await api.checkin(value)); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+    try {
+      const r = await api.checkin(value);
+      setResult(r);
+      if (designRef.current?.enabled) setSplash({ registration: r.registration, state: r.alreadyCheckedIn ? "already" : "ready" });
+    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   async function start() {
     stop(); const generation = session.current; setCamera(true); setError(""); setResult(null); setSuccess(false);
@@ -36,7 +53,7 @@ export default function Checkin({ rows, refresh }: { rows: Registration[]; refre
   }
   async function admit(value: string) {
     setBusy(true); setError("");
-    try { const r = await api.checkin(value, true); setResult(r); setTicket(value); setSuccess(!r.alreadyCheckedIn); await refresh(); }
+    try { const r = await api.checkin(value, true); setResult(r); setTicket(value); setSuccess(!r.alreadyCheckedIn); setSplash(null); await refresh(); }
     catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   // Only people with a ticket belong here – rejected / pending registrations never show up.
@@ -80,7 +97,7 @@ export default function Checkin({ rows, refresh }: { rows: Registration[]; refre
 
     <h2>Einlassübersicht</h2><p className="muted">Automatische Aktualisierung alle 5 Sekunden · Zeiten in Europe/Berlin</p>
     <nav className="checkin-filter" aria-label="Check-in filtern">{([["all", "Alle Tickets", tickets.length], ["pending", "⏳ Noch nicht da", pending.length], ["checked", "✅ Eingelassen", checked.length]] as const).map(([id, label, count]) => <button key={id} aria-pressed={filter === id} onClick={() => setFilter(id)}>{label} <strong>{count}</strong></button>)}</nav>
-    <div className="category-summary">{CATEGORIES.map(c => <span key={c.id}>{c.icon} {c.label}: {checked.filter(r => r.category === c.id).length} / {checked.filter(r => r.category === c.id).length + pending.filter(r => r.category === c.id).length}</span>)}</div>
+    <div className="category-summary">{categoriesInUse(categories, tickets.map(t => t.category)).map(c => <span key={c.id}>{c.icon} {c.label}: {checked.filter(r => r.category === c.id).length} / {checked.filter(r => r.category === c.id).length + pending.filter(r => r.category === c.id).length}</span>)}</div>
     <input className="input" type="search" aria-label="Check-in-Liste durchsuchen" placeholder="Name, Nummer oder Kategorie suchen…" value={search} onChange={e => setSearch(e.target.value)} />
     <ul className="checkin-list">{visible.map(x => {
       const state = x.checkedInAt ? "in" : "pending";
@@ -93,6 +110,7 @@ export default function Checkin({ rows, refresh }: { rows: Registration[]; refre
         </div>
       </li>;
     })}</ul>{visible.length === 0 && <p className="muted">Keine passenden Anmeldungen.</p>}
+    {splash && design && <CheckinSplash design={design} category={findCategory(splash.registration.category, categories)} guest={splash.registration} state={splash.state} eventName={eventName} onClose={closeSplash} admitting={busy} onAdmit={() => void admit(ticket)} />}
   </section>;
 }
 

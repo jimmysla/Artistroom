@@ -1,29 +1,40 @@
-import type { Config } from "@netlify/functions";
+import type { Config, Context } from "@netlify/functions";
+import { eq } from "drizzle-orm";
+import { db } from "../../db/index.js";
+import { adminUsers } from "../../db/schema.js";
+import { validatePassword, validatePasswordConfirm } from "../../shared/admin.js";
 import {
   AuthConfigError,
   checkCredentials,
   clearSessionCookie,
   createSessionCookie,
   getSession,
+  hashPassword,
   isSecureRequest,
+  isSeededPassword,
   toIdentity,
+  verifyLogin,
+  verifyPassword,
 } from "../lib/auth.js";
 import { logAction } from "../lib/audit.js";
-import { clearFailures, lockedUntil, recordFailure } from "../lib/login-guard.js";
+import { clearFailures, lockedUntil, loginScope, recordFailure } from "../lib/login-guard.js";
 import { TransportError, readSealed } from "../lib/crypto.js";
 import { error, json, str, logError, crossSiteError, isCrossSite } from "../lib/http.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export default async (req: Request) => {
+export default async (req: Request, context: Context) => {
   if (isCrossSite(req)) return crossSiteError();
   const action = new URL(req.url).pathname.split("/").pop();
   const secure = isSecureRequest(req);
+  const scope = loginScope(context?.deploy);
+  // Deploy previews use a copy of the live data → the login page explains this and links the live site.
+  const environment = { preview: scope !== "production", liveUrl: context?.site?.url ?? "" };
 
   try {
     if (action === "session" && req.method === "GET") {
       const session = await getSession(req);
-      return session ? json({ authenticated: true, user: session }) : json({ authenticated: false }, 401);
+      return session ? json({ authenticated: true, user: session, environment }) : json({ authenticated: false, environment }, 401);
     }
 
     if (action === "logout" && req.method === "POST") {
@@ -41,24 +52,57 @@ export default async (req: Request) => {
       }
       const name = username.trim().toLowerCase();
       // Locked accounts get the same answer as wrong credentials (no hint which accounts exist).
-      if (await lockedUntil(name)) {
+      if (await lockedUntil(scope, name)) {
         await logAction({ username: null, action: "login_gesperrt", target: username.trim().slice(0, 60), details: "Zu viele Fehlversuche – Konto vorübergehend gesperrt" });
         await delay(800);
         return error("Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen.", 429);
       }
-      const user = await checkCredentials(username, password);
+      const user = await verifyLogin(username, password);
+      if (user === "inactive") {
+        await clearFailures(scope, name);
+        await logAction({ username: null, action: "login_deaktiviert", target: username.trim().slice(0, 60), details: "Richtiges Passwort, aber Konto ist deaktiviert" });
+        return error("Dieses Konto ist deaktiviert. Bitte wende dich an einen Super User.", 403);
+      }
       if (!user) {
         // Slow down brute-force attempts.
-        const locked = await recordFailure(name);
+        const locked = await recordFailure(scope, name);
         await logAction({ username: null, action: "login_fehlgeschlagen", target: username.trim().slice(0, 60), details: locked ? "5 Fehlversuche – Login für 15 Minuten gesperrt" : null });
         await delay(800);
         return error(locked ? "Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen." : "Benutzername oder Passwort ist falsch.", locked ? 429 : 401);
       }
-      await clearFailures(name);
+      await clearFailures(scope, name);
       await logAction({ username: user.username, action: "login" });
-      return json({ ok: true, user: toIdentity(user) }, 200, {
+      return json({ ok: true, user: await toIdentity(user) }, 200, {
         "Set-Cookie": createSessionCookie(user, secure),
       });
+    }
+
+    // Own password change (required for accounts that still use a seeded password).
+    if (action === "password" && req.method === "POST") {
+      const session = await getSession(req);
+      if (!session) return error("Nicht autorisiert.", 401);
+      const body = await readSealed(req);
+      const name = session.username.toLowerCase();
+      if (await lockedUntil(scope, name)) return error("Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen.", 429);
+      const user = await checkCredentials(session.username, str(body.currentPassword));
+      if (!user) {
+        await recordFailure(scope, name);
+        await delay(800);
+        return error("Das aktuelle Passwort ist falsch.", 403, { fieldErrors: { currentPassword: "Falsches Passwort." } });
+      }
+      const password = str(body.password);
+      const p = validatePassword(password);
+      if (p) return error(p, 422, { fieldErrors: { password: p } });
+      const c = validatePasswordConfirm(password, str(body.passwordConfirm));
+      if (c) return error(c, 422, { fieldErrors: { passwordConfirm: c } });
+      if ((await verifyPassword(password, user.passwordHash)) || (await isSeededPassword(password))) {
+        const msg = "Bitte ein neues Passwort wählen, das noch nie verwendet wurde.";
+        return error(msg, 422, { fieldErrors: { password: msg } });
+      }
+      const [updated] = await db.update(adminUsers).set({ passwordHash: await hashPassword(password) }).where(eq(adminUsers.id, user.id)).returning();
+      await logAction({ username: user.username, action: "passwort_geaendert", target: user.username });
+      // The session key depends on the password hash → issue a fresh cookie.
+      return json({ ok: true, user: await toIdentity(updated) }, 200, { "Set-Cookie": createSessionCookie(updated, secure) });
     }
 
     return error("Nicht gefunden.", 404);
@@ -73,5 +117,5 @@ export default async (req: Request) => {
 // Per-IP rate limit against brute force / scraping.
 export const config: Config = {
   rateLimit: { windowLimit: 20, windowSize: 60, aggregateBy: ["ip", "domain"] },
-  path: ["/api/admin/login", "/api/admin/logout", "/api/admin/session"],
+  path: ["/api/admin/login", "/api/admin/logout", "/api/admin/session", "/api/admin/password"],
 };

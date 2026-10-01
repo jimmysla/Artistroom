@@ -2,28 +2,29 @@ import type { Config, Context } from "@netlify/functions";
 import { desc, eq, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { eventSettings, registrations, surveyResponses, type Registration } from "../../db/schema.js";
-import { MAX_AMOUNT_CENTS, hasTicket, isFinalStatus, instagramUrl, tiktokUrl, categoryLabel, formatNet, formatRegistrationNumber, isStatus, statusLabel } from "../../shared/registration.js";
+import { MAX_AMOUNT_CENTS, hasTicket, isFinalStatus, instagramUrl, tiktokUrl, formatNet, formatRegistrationNumber, isStatus, statusLabel } from "../../shared/registration.js";
 import { checkCredentials, requireAdmin } from "../lib/auth.js";
 import { allowedProviders, isPaymentProvider, paymentPageUrl } from "../lib/payments.js";
 import { encryptLegacyRegistrations, openRegistration, openRegistrations } from "../lib/pii.js";
 import { TransportError, readSealed } from "../lib/crypto.js";
-import { logAction } from "../lib/audit.js";
+import { logAction, purgeRegistrationLog } from "../lib/audit.js";
 import { RESET_CONFIRMATION } from "../../shared/admin.js";
 import { error, json, logError, readJson, str } from "../lib/http.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 import { randomUUID } from "node:crypto";
-import { getEvent } from "../lib/event.js";
+import { getEvent, getRegistrationForm } from "../lib/event.js";
+import { categoryName, parseExtra, type FormCategory } from "../../shared/registration-form.js";
 import { buildStatusMail, checkMailConfig, sendMail, sendStatusMail, MailError } from "../lib/mail.js";
 
-function toCsv(rows: Registration[]): string {
+function toCsv(rows: Registration[], categories: FormCategory[]): string {
   const escape = (v: string) => {
     // Neutralise spreadsheet formula injection and quote every cell.
     const safe = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
     return `"${safe.replace(/"/g, '""')}"`;
   };
-  const header = ["Anmeldenummer", "Datum", "Künstlername", "Vorname", "Nachname", "E-Mail", "Instagram", "TikTok", "Eingeladen / empfohlen von", "Stadt", "Kategorie", "Status", "Betrag (EUR)", "Foto/Video-Einwilligung", "Check-in", "E-Mail versendet"];
+  const header = ["Anmeldenummer", "Datum", "Künstlername", "Vorname", "Nachname", "E-Mail", "Instagram", "TikTok", "Eingeladen / empfohlen von", "Stadt", "Kategorie", "Status", "Betrag (EUR)", "Foto/Video-Einwilligung", "Check-in", "E-Mail versendet", "Weitere Angaben"];
   const lines = rows.map((r) =>
     [
       formatRegistrationNumber(r.id),
@@ -36,12 +37,13 @@ function toCsv(rows: Registration[]): string {
       r.tiktok ? tiktokUrl(r.tiktok) : "",
       r.referredBy ?? "",
       r.city ?? "",
-      categoryLabel(r.category),
+      categoryName(r.category, categories),
       statusLabel(r.status),
       r.amountCents != null ? (r.amountCents / 100).toFixed(2).replace(".", ",") : "",
       r.mediaConsentAt ? new Date(r.mediaConsentAt).toISOString() : "",
       r.checkedInAt ? new Date(r.checkedInAt).toISOString() : "",
       r.emailSentAt ? new Date(r.emailSentAt).toISOString() : "",
+      Object.values(parseExtra(r.extraFields)).map((a) => `${a.label}: ${a.value}`).join(" | "),
     ]
       .map(escape)
       .join(";"),
@@ -91,22 +93,21 @@ export default async (req: Request, context: Context) => {
         await delay(800);
         return error(authorizer ? "Dieses Konto ist kein Super User. Nur Super User dürfen alle Anmeldungen löschen." : "Benutzername oder Passwort ist falsch.", 403, { fieldErrors: { password: "Login fehlgeschlagen" } });
       }
-      // Snapshot first so the reset can be undone from the log.
-      const rows = await db.select().from(registrations);
-      const responses = await db.select().from(surveyResponses);
-      const [settingsRow] = await db.select({ surveySentAt: eventSettings.surveySentAt }).from(eventSettings);
+      const [{ count: rowCount }] = await db.select({ count: sql<number>`count(*)::int` }).from(registrations);
+      const [{ count: responseCount }] = await db.select({ count: sql<number>`count(*)::int` }).from(surveyResponses);
       // Removes every registration and restarts the serial so the next registration is #0001 again.
       await db.execute(sql`TRUNCATE TABLE ${registrations} RESTART IDENTITY`);
       // The survey belongs to the past event too: answers deleted, automatic sending re-armed.
       await db.delete(surveyResponses);
       await db.update(eventSettings).set({ surveySentAt: null });
+      // Final: every log entry about a registration goes too (numbers start again at #0001).
+      await purgeRegistrationLog();
       await logAction({
         username: actor,
         action: "alle_anmeldungen_geloescht",
-        details: `${rows.length} Anmeldung(en) und ${responses.length} Umfrage-Antwort(en) gelöscht, Anmeldenummern zurückgesetzt · bestätigt durch Login von ${authorizer.username}`,
-        undo: { kind: "all_registrations_deleted", rows, surveyResponses: responses, surveySentAt: settingsRow?.surveySentAt?.toISOString() ?? null },
+        details: `${rowCount} Anmeldung(en), ${responseCount} Umfrage-Antwort(en) und alle zugehörigen Log-Einträge endgültig gelöscht, Anmeldenummern zurückgesetzt · bestätigt durch Login von ${authorizer.username}`,
       });
-      return json({ ok: true, deleted: rows.length });
+      return json({ ok: true, deleted: rowCount });
     }
 
     if (!idParam) {
@@ -119,7 +120,7 @@ export default async (req: Request, context: Context) => {
       if (isCsv) {
         await logAction({ username: actor, action: "csv_export", details: `${rows.length} Anmeldung(en)` });
         const date = new Date().toISOString().slice(0, 10);
-        return new Response(toCsv(rows), {
+        return new Response(toCsv(rows, (await getRegistrationForm()).categories), {
           headers: {
             "Content-Type": "text/csv; charset=utf-8",
             "Content-Disposition": `attachment; filename="artistroom-anmeldungen-${date}.csv"`,
@@ -214,9 +215,9 @@ export default async (req: Request, context: Context) => {
     if (method === "DELETE") {
       const [deleted] = await db.delete(registrations).where(eq(registrations.id, id)).returning();
       if (!deleted) return error("Anmeldung nicht gefunden.", 404);
-      const row = await openRegistration(deleted);
-      // The undo snapshot keeps the encrypted row as stored.
-      await logAction({ username: actor, action: "anmeldung_geloescht", target: target(row), details: `${categoryLabel(row.category)} · ${row.email}`, registrationId: row.id, undo: { kind: "registration_deleted", row: deleted } });
+      // Deleted people vanish from the log entirely; the deletion itself is noted without personal data.
+      await purgeRegistrationLog(deleted.id);
+      await logAction({ username: actor, action: "anmeldung_geloescht", target: formatRegistrationNumber(deleted.id), details: `${categoryName(deleted.category, (await getRegistrationForm()).categories)} · Anmeldung und alle zugehörigen Log-Einträge endgültig gelöscht` });
       return json({ ok: true });
     }
 

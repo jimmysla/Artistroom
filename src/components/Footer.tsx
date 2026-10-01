@@ -6,6 +6,8 @@ export default function Footer() {
     <footer className="site-footer">
       <span className="footer-brand"><EventName /></span>
       <span aria-hidden="true">·</span>
+      <Link to="/cookies">Cookies</Link>
+      <span aria-hidden="true">·</span>
       <Link to="/login">Login</Link>
     </footer>
   );

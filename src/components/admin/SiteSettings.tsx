@@ -8,6 +8,11 @@ import RichText from "../RichText";
 import FormBuilder, { ColorField } from "./FormBuilder";
 import ScanOverlay from "./ScanOverlay";
 import { MAX_BYTES, toBase64 } from "./MailImagesPanel";
+import { useCategories } from "../../lib/event";
+import {
+  CARD_SHAPES, CARD_WIDTHS, SCAN_ALIGNS, SCAN_ELEMENTS, SCAN_PLACES, SCAN_SIZES, SCAN_STYLES, scanStyleGroup,
+  type CardShape, type CardWidth, type ScanElement,
+} from "../../../shared/site";
 import { LEGAL_PAGES, SCAN_ANIMATIONS, type CheckinDesign, type LegalPage, type ScanAnimation, type ScanState } from "../../../shared/site";
 
 type Section = "form" | "checkin" | "legal";
@@ -126,7 +131,7 @@ function CheckinDesigner({ value: d, onChange, onError }: { value: CheckinDesign
       if (f.size > MAX_BYTES) throw new Error("Bild ist zu groß (max. 3 MB).");
       const { image } = await api.uploadMailImage(f.name, await toBase64(f));
       setImages((list) => [image, ...list]);
-      set({ logoImage: image.id, showLogo: true });
+      set({ logoImage: image.id, layout: d.layout.map((e) => (e.id === "logo" ? { ...e, visible: true } : e)) });
     } catch (e) {
       onError((e as Error).message);
     } finally {
@@ -135,10 +140,12 @@ function CheckinDesigner({ value: d, onChange, onError }: { value: CheckinDesign
     }
   };
 
-  const toggle = (key: "tintBackground" | "showLogo" | "showCategory" | "showRealName" | "showCity" | "showInstagram", label: string) => (
+  const toggle = (key: "tintBackground" | "categoryColor", label: string) => (
     <label className="checkbox-inline"><input type="checkbox" checked={d[key]} onChange={(e) => set({ [key]: e.target.checked })} /> {label}</label>
   );
 
+  // Preview uses the configured DJ colour, like a real scan of a DJ ticket.
+  const djColor = useCategories().find((c) => c.id === "dj")?.color ?? "";
   const note = state === "invalid" ? "Ticket nicht gefunden." : state === "already" ? "Wurde bereits eingelassen um 20:15 Uhr – nicht erneut einlassen!" : state === "ok" ? "Eingelassen um 20:15 Uhr" : "Noch nicht eingecheckt";
 
   return (
@@ -153,7 +160,10 @@ function CheckinDesigner({ value: d, onChange, onError }: { value: CheckinDesign
             <ColorField label="Bereits eingecheckt" value={d.warnColor} onChange={(v) => set({ warnColor: v })} allowEmpty={false} />
             <ColorField label="Ungültig / kein Einlass" value={d.errorColor} onChange={(v) => set({ errorColor: v })} allowEmpty={false} />
           </div>
-          {toggle("tintBackground", "Hintergrund nach dem Scan in der Ergebnisfarbe einfärben")}
+          <div className="builder-toggles">
+            {toggle("tintBackground", "Hintergrund nach dem Scan in der Ergebnisfarbe einfärben")}
+            {toggle("categoryColor", "Gültige Tickets in der Farbe der Kategorie (Baukasten → Kategorie-Farbcode, z. B. DJ)")}
+          </div>
         </Fold>
         <Fold title="Logo & Animation">
           <div className="settings-fields">
@@ -184,7 +194,6 @@ function CheckinDesigner({ value: d, onChange, onError }: { value: CheckinDesign
               <input type="range" min={0} max={4000} step={100} value={d.durationMs} onChange={(e) => set({ durationMs: Number(e.target.value) })} onMouseUp={() => setReplay((r) => r + 1)} onTouchEnd={() => setReplay((r) => r + 1)} />
             </label>
           </div>
-          {toggle("showLogo", "Logo anzeigen")}
         </Fold>
         <Fold title="Texte & Infos">
           <div className="settings-fields">
@@ -195,12 +204,24 @@ function CheckinDesigner({ value: d, onChange, onError }: { value: CheckinDesign
               </label>
             ))}
           </div>
-          <div className="builder-toggles">
-            {toggle("showCategory", "Kategorie")}
-            {toggle("showRealName", "Vor- und Nachname")}
-            {toggle("showCity", "Stadt")}
-            {toggle("showInstagram", "Instagram")}
+        </Fold>
+        <Fold title="Aufbau: was steht wo, in welcher Form und wie groß">
+          <p className="muted small">Reihenfolge mit ↑ ↓, Position (über, in oder unter der Karte), Ausrichtung, Form und Größe für jedes Element. Die Buttons stehen immer am Ende der Karte.</p>
+          <div className="settings-fields">
+            <label className="settings-field">
+              Form der Karte
+              <select className="input" value={d.cardShape} onChange={(e) => set({ cardShape: e.target.value as CardShape })}>
+                {(Object.keys(CARD_SHAPES) as CardShape[]).map((k) => <option key={k} value={k}>{CARD_SHAPES[k]}</option>)}
+              </select>
+            </label>
+            <label className="settings-field">
+              Breite der Karte
+              <select className="input" value={d.cardWidth} onChange={(e) => set({ cardWidth: e.target.value as CardWidth })}>
+                {(Object.keys(CARD_WIDTHS) as CardWidth[]).map((k) => <option key={k} value={k}>{CARD_WIDTHS[k]}</option>)}
+              </select>
+            </label>
           </div>
+          <LayoutEditor value={d.layout} onChange={(layout) => set({ layout })} />
         </Fold>
       </div>
       <div className="checkin-preview">
@@ -211,9 +232,49 @@ function CheckinDesigner({ value: d, onChange, onError }: { value: CheckinDesign
           ))}
           <button type="button" onClick={() => setReplay((r) => r + 1)}>▶ Abspielen</button>
         </div>
-        <ScanOverlay preview design={d} state={state} replay={replay} info={state === "invalid" ? { ...SAMPLE, name: "", number: "", category: "", realName: "", city: "", instagram: "", note } : { ...SAMPLE, note }}
+        <ScanOverlay preview design={d} state={state} replay={replay} info={state === "invalid" ? { ...SAMPLE, name: "", number: "", category: "", realName: "", city: "", instagram: "", note } : { ...SAMPLE, note, categoryColor: djColor }}
           actions={state === "ready" ? <Button size="sm">✅ Einlass bestätigen</Button> : <Button size="sm">📷 Nächstes Ticket scannen</Button>} />
       </div>
     </div>
+  );
+}
+
+function LayoutEditor({ value, onChange }: { value: ScanElement[]; onChange: (v: ScanElement[]) => void }) {
+  const update = (i: number, patch: Partial<ScanElement>) => onChange(value.map((e, j) => (j === i ? { ...e, ...patch } : e)));
+  const move = (i: number, dir: -1 | 1) => {
+    const next = [...value];
+    const j = i + dir;
+    if (j < 0 || j >= next.length) return;
+    [next[i], next[j]] = [next[j], next[i]];
+    onChange(next);
+  };
+  const select = <T extends string>(label: string, current: T, options: Record<T, string>, onPick: (v: T) => void) => (
+    <label className="layout-select">
+      <span>{label}</span>
+      <select className="input input-sm" value={current} onChange={(e) => onPick(e.target.value as T)}>
+        {(Object.keys(options) as T[]).map((k) => <option key={k} value={k}>{options[k]}</option>)}
+      </select>
+    </label>
+  );
+  return (
+    <ol className="builder-list">
+      {value.map((e, i) => (
+        <li key={e.id} className={`builder-block layout-row ${e.visible ? "" : "is-hidden"}`}>
+          <div className="builder-head">
+            <label className="checkbox-inline"><input type="checkbox" checked={e.visible} onChange={(ev) => update(i, { visible: ev.target.checked })} /> <strong>{SCAN_ELEMENTS[e.id]}</strong></label>
+            <span className="block-move">
+              <button type="button" aria-label="Nach oben" disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
+              <button type="button" aria-label="Nach unten" disabled={i === value.length - 1} onClick={() => move(i, 1)}>↓</button>
+            </span>
+          </div>
+          <div className="layout-controls">
+            {select("Wo", e.place, SCAN_PLACES, (place) => update(i, { place }))}
+            {select("Ausrichtung", e.align, SCAN_ALIGNS, (align) => update(i, { align }))}
+            {select("Form", e.style, SCAN_STYLES[scanStyleGroup(e.id)] as Record<string, string>, (style) => update(i, { style }))}
+            {select("Größe", e.size, SCAN_SIZES, (size) => update(i, { size }))}
+          </div>
+        </li>
+      ))}
+    </ol>
   );
 }

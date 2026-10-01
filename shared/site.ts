@@ -167,8 +167,44 @@ export const SCAN_ANIMATIONS = { pulse: "Puls-Ringe", zoom: "Logo-Zoom", spin: "
 export type ScanAnimation = keyof typeof SCAN_ANIMATIONS;
 export type ScanState = "ready" | "ok" | "already" | "invalid";
 
+/* Result layout: which element is shown where (above / in the card), in which form and how big. */
+export const SCAN_ELEMENTS = {
+  logo: "Logo", icon: "Status-Symbol", title: "Überschrift", number: "Anmeldenummer", category: "Kategorie",
+  name: "Künstlername", realName: "Vor- und Nachname", city: "Stadt", instagram: "Instagram", note: "Hinweis (Uhrzeit / Fehler)",
+} as const;
+export type ScanElementId = keyof typeof SCAN_ELEMENTS;
+export const SCAN_SIZES = { s: "Klein", m: "Mittel", l: "Groß", xl: "Sehr groß" } as const;
+export type ScanSize = keyof typeof SCAN_SIZES;
+export const SCAN_ALIGNS = { left: "Links", center: "Mitte", right: "Rechts" } as const;
+export type ScanAlign = keyof typeof SCAN_ALIGNS;
+export const SCAN_PLACES = { above: "Über der Karte", card: "In der Karte", below: "Unter der Karte" } as const;
+export type ScanPlace = keyof typeof SCAN_PLACES;
+/** "Form" per element type: shapes for logo / icon, text styles for everything else. */
+export const SCAN_STYLES = {
+  logo: { plain: "Original", round: "Rund", rounded: "Abgerundet" },
+  icon: { circle: "Kreis", square: "Quadrat", plain: "Ohne Hintergrund" },
+  text: { text: "Normal", bold: "Fett", upper: "GROSSBUCHSTABEN", badge: "Badge", italic: "Kursiv" },
+} as const;
+export const scanStyleGroup = (id: ScanElementId) => (id === "logo" ? "logo" : id === "icon" ? "icon" : "text");
+export interface ScanElement { id: ScanElementId; visible: boolean; place: ScanPlace; align: ScanAlign; size: ScanSize; style: string }
+export const CARD_SHAPES = { rounded: "Abgerundet", square: "Eckig", soft: "Stark abgerundet", none: "Ohne Karte" } as const;
+export type CardShape = keyof typeof CARD_SHAPES;
+export const CARD_WIDTHS = { s: "Schmal", m: "Mittel", l: "Breit" } as const;
+export type CardWidth = keyof typeof CARD_WIDTHS;
+
+const el = (id: ScanElementId, size: ScanSize, style: string, place: ScanPlace = "card"): ScanElement => ({ id, visible: true, place, align: "center", size, style });
+export const DEFAULT_SCAN_LAYOUT: ScanElement[] = [
+  el("logo", "l", "plain", "above"), el("icon", "m", "circle"), el("title", "m", "bold"), el("number", "s", "text"), el("category", "s", "badge"),
+  el("name", "l", "bold"), el("realName", "m", "text"), el("city", "m", "text"), el("instagram", "s", "text"), el("note", "m", "bold"),
+];
+
 export interface CheckinDesign {
   background: string;
+  /** Valid tickets (ready / ok) use the configured colour of the guest's category, if it has one. */
+  categoryColor: boolean;
+  layout: ScanElement[];
+  cardShape: CardShape;
+  cardWidth: CardWidth;
   /** Tint the background with the result colour (green / orange / red). */
   tintBackground: boolean;
   textColor: string;
@@ -178,19 +214,18 @@ export interface CheckinDesign {
   errorColor: string;
   /** mail-images id; "" = Artistroom logo. */
   logoImage: string;
-  showLogo: boolean;
   animation: ScanAnimation;
   /** Length of the intro animation in ms before the result is shown. */
   durationMs: number;
   titles: Record<ScanState, string>;
-  showCategory: boolean;
-  showRealName: boolean;
-  showCity: boolean;
-  showInstagram: boolean;
 }
 
 export const DEFAULT_CHECKIN: CheckinDesign = {
   background: "#0b0b12",
+  categoryColor: true,
+  layout: DEFAULT_SCAN_LAYOUT,
+  cardShape: "rounded",
+  cardWidth: "m",
   tintBackground: true,
   textColor: "#ffffff",
   accentColor: "#8b5cf6",
@@ -198,14 +233,9 @@ export const DEFAULT_CHECKIN: CheckinDesign = {
   warnColor: "#f59e0b",
   errorColor: "#ef4444",
   logoImage: "",
-  showLogo: true,
   animation: "pulse",
   durationMs: 1200,
   titles: { ready: "🎟️ TICKET GÜLTIG", ok: "✅ EINLASS OK", already: "⚠️ BEREITS EINGECHECKT", invalid: "⛔ KEIN EINLASS" },
-  showCategory: true,
-  showRealName: true,
-  showCity: true,
-  showInstagram: true,
 };
 
 export function normalizeCheckin(raw: unknown): CheckinDesign {
@@ -215,6 +245,10 @@ export function normalizeCheckin(raw: unknown): CheckinDesign {
   const duration = Number(r.durationMs);
   return {
     background: color(r.background, d.background),
+    categoryColor: bool(r.categoryColor, d.categoryColor),
+    layout: normalizeLayout(r),
+    cardShape: typeof r.cardShape === "string" && r.cardShape in CARD_SHAPES ? (r.cardShape as CardShape) : d.cardShape,
+    cardWidth: typeof r.cardWidth === "string" && r.cardWidth in CARD_WIDTHS ? (r.cardWidth as CardWidth) : d.cardWidth,
     tintBackground: bool(r.tintBackground, d.tintBackground),
     textColor: color(r.textColor, d.textColor),
     accentColor: color(r.accentColor, d.accentColor),
@@ -222,15 +256,35 @@ export function normalizeCheckin(raw: unknown): CheckinDesign {
     warnColor: color(r.warnColor, d.warnColor),
     errorColor: color(r.errorColor, d.errorColor),
     logoImage: typeof r.logoImage === "string" && IMAGE_RE.test(r.logoImage) ? r.logoImage : "",
-    showLogo: bool(r.showLogo, d.showLogo),
     animation: typeof r.animation === "string" && r.animation in SCAN_ANIMATIONS ? (r.animation as ScanAnimation) : d.animation,
     durationMs: Number.isFinite(duration) ? Math.min(4000, Math.max(0, Math.round(duration))) : d.durationMs,
     titles: Object.fromEntries((Object.keys(d.titles) as ScanState[]).map((k) => [k, text(t[k], 80) || d.titles[k]])) as Record<ScanState, string>,
-    showCategory: bool(r.showCategory, d.showCategory),
-    showRealName: bool(r.showRealName, d.showRealName),
-    showCity: bool(r.showCity, d.showCity),
-    showInstagram: bool(r.showInstagram, d.showInstagram),
   };
+}
+
+/** Layout list: known elements once each, in stored order; missing ones appended (old show* toggles respected). */
+function normalizeLayout(r: Record<string, unknown>): ScanElement[] {
+  const legacy: Partial<Record<ScanElementId, unknown>> = { logo: r.showLogo, category: r.showCategory, realName: r.showRealName, city: r.showCity, instagram: r.showInstagram };
+  const seen = new Set<string>();
+  const out: ScanElement[] = [];
+  for (const raw of Array.isArray(r.layout) ? r.layout : []) {
+    const e = obj(raw);
+    const id = e.id as ScanElementId;
+    if (typeof id !== "string" || !(id in SCAN_ELEMENTS) || seen.has(id)) continue;
+    seen.add(id);
+    const base = DEFAULT_SCAN_LAYOUT.find((x) => x.id === id)!;
+    const styles = SCAN_STYLES[scanStyleGroup(id)] as Record<string, string>;
+    out.push({
+      id,
+      visible: bool(e.visible, true),
+      place: typeof e.place === "string" && e.place in SCAN_PLACES ? (e.place as ScanPlace) : base.place,
+      align: typeof e.align === "string" && e.align in SCAN_ALIGNS ? (e.align as ScanAlign) : base.align,
+      size: typeof e.size === "string" && e.size in SCAN_SIZES ? (e.size as ScanSize) : base.size,
+      style: typeof e.style === "string" && e.style in styles ? e.style : base.style,
+    });
+  }
+  for (const base of DEFAULT_SCAN_LAYOUT) if (!seen.has(base.id)) out.push({ ...base, visible: bool(legacy[base.id], true) });
+  return out;
 }
 
 /** New random block id with a type prefix (c = category, f = custom field, b = box). */

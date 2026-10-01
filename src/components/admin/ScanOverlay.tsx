@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import type { CheckinDesign, ScanState } from "../../../shared/site";
+import type { CheckinDesign, ScanElement, ScanPlace, ScanState } from "../../../shared/site";
 
 export interface ScanInfo {
   name: string;
@@ -10,7 +10,12 @@ export interface ScanInfo {
   instagram: string;
   /** Extra line, e.g. check-in time or the error message. */
   note: string;
+  /** Configured colour of the guest's category (form builder); "" = none. */
+  categoryColor?: string;
 }
+
+const SCALE = { s: 0.8, m: 1, l: 1.4, xl: 1.9 } as const;
+const PLACES: ScanPlace[] = ["above", "card", "below"];
 
 interface Props {
   design: CheckinDesign;
@@ -49,7 +54,32 @@ export default function ScanOverlay({ design, state, info, actions, preview, rep
   }, [preview, onClose]);
 
   const showResult = introDone && state !== null;
-  const stateColor = !state ? design.accentColor : state === "invalid" ? design.errorColor : state === "already" ? design.warnColor : state === "ok" ? design.okColor : design.accentColor;
+  // Valid tickets glow in the colour of the guest's category (e.g. DJ), if configured.
+  const categoryColor = design.categoryColor && info?.categoryColor && (state === "ready" || state === "ok") ? info.categoryColor : "";
+  const stateColor = categoryColor || (!state ? design.accentColor : state === "invalid" ? design.errorColor : state === "already" ? design.warnColor : state === "ok" ? design.okColor : design.accentColor);
+  const logoVisible = design.layout.some((e) => e.id === "logo" && e.visible);
+
+  const content = (e: ScanElement): ReactNode => {
+    const symbol = state === "invalid" ? "✕" : state === "already" ? "!" : "✓";
+    switch (e.id) {
+      case "logo": return <img className="scan-el-img" src={scanLogo(design)} alt="" />;
+      case "icon": return <span className="scan-burst" aria-hidden="true">{symbol}</span>;
+      case "title": return <strong role="status">{design.titles[state!]}</strong>;
+      case "instagram": return info?.instagram ? `@${info.instagram}` : null;
+      default: return info?.[e.id] || null;
+    }
+  };
+  const render = (place: ScanPlace) =>
+    design.layout.filter((e) => e.visible && e.place === place).map((e) => {
+      const c = content(e);
+      if (!c) return null;
+      const Tag = e.id === "name" ? "h2" : "div";
+      return (
+        <Tag key={e.id} className={`scan-el scan-el-${e.id} align-${e.align} style-${e.style}`} style={{ "--el-scale": SCALE[e.size] } as CSSProperties}>
+          <span className="scan-el-inner">{c}</span>
+        </Tag>
+      );
+    });
   const style = {
     "--scan-bg": design.background,
     "--scan-text": design.textColor,
@@ -71,32 +101,22 @@ export default function ScanOverlay({ design, state, info, actions, preview, rep
           <div className="scan-intro-stage">
             <span className="scan-ring" aria-hidden="true" />
             <span className="scan-ring is-delayed" aria-hidden="true" />
-            {design.showLogo ? <img className="scan-logo" src={scanLogo(design)} alt="" /> : <span className="scan-dot" aria-hidden="true" />}
+            {logoVisible ? <img className="scan-logo" src={scanLogo(design)} alt="" /> : <span className="scan-dot" aria-hidden="true" />}
           </div>
           <span className="scan-intro-text">Ticket wird geprüft…</span>
         </div>
       ) : (
-        <div className="scan-stack" key={`${state}-${replay}`}>
-          {/* Logo sits above the card in its own row, so the card never covers it. */}
-          {design.showLogo && <img className="scan-card-logo" src={scanLogo(design)} alt="" />}
-          <div className={`scan-card is-${state}`}>
-          <div className="scan-card-head">
-            <span className="scan-burst" aria-hidden="true">{state === "invalid" ? "✕" : state === "already" ? "!" : "✓"}</span>
-            <strong className="scan-title" role="status">{design.titles[state!]}</strong>
-          </div>
-          {info && (
-            <>
-              {(design.showCategory || info.number) && <span className="scan-sub">{[info.number, design.showCategory && info.category].filter(Boolean).join(" · ")}</span>}
-              {info.name && <h2 className="scan-name">{info.name}</h2>}
-              {[design.showRealName && info.realName, design.showCity && info.city].filter(Boolean).length > 0 && (
-                <p>{[design.showRealName && info.realName, design.showCity && info.city].filter(Boolean).join(" · ")}</p>
-              )}
-              {design.showInstagram && info.instagram && <p>@{info.instagram}</p>}
-              {info.note && <p className="scan-note">{info.note}</p>}
-            </>
+        <div className={`scan-stack width-${design.cardWidth}`} key={`${state}-${replay}`}>
+          {PLACES.map((place) =>
+            place === "card" ? (
+              <div key={place} className={`scan-card shape-${design.cardShape} is-${state}`}>
+                {render("card")}
+                {actions && <div className="scan-actions">{actions}</div>}
+              </div>
+            ) : (
+              <div key={place} className={`scan-zone is-${place}`}>{render(place)}</div>
+            ),
           )}
-          {actions && <div className="scan-actions">{actions}</div>}
-          </div>
         </div>
       )}
     </div>

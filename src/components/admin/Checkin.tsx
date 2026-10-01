@@ -70,6 +70,7 @@ export default function Checkin({ rows, refresh }: { rows: Registration[]; refre
     realName: realName(r),
     city: r.city ?? "",
     instagram: r.instagram ?? "",
+    categoryColor: categories.find(c => c.id === r.category)?.color ?? "",
     note: r.checkedInAt ? `${banner === "ok" ? "Eingelassen um" : "Wurde bereits eingelassen um"} ${formatDateTime(r.checkedInAt)} Uhr${banner === "already" ? " – nicht erneut einlassen!" : ""}` : "Noch nicht eingecheckt",
   } : null;
 

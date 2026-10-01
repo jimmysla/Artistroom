@@ -87,6 +87,10 @@ export const eventSettings = pgTable("event_settings", {
   // Home page: welcome text under the scroll hint (placeholder {ticketpreis}) and image (mail-images id).
   welcomeText: text("welcome_text").notNull().default(""),
   welcomeImage: text("welcome_image").notNull().default(""),
+  // Footer: show „Impressum“ / „Datenschutz“ ("an" | "aus") and their texts.
+  showLegal: text("show_legal").notNull().default("aus"),
+  imprintText: text("imprint_text").notNull().default(""),
+  privacyText: text("privacy_text").notNull().default(""),
   // Ticket product for the checkout page (shared/product.ts).
   product: jsonb().$type<Record<string, unknown>>(),
   // Survey builder config (shared/survey.ts) and when the invitation was sent out.

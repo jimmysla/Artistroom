@@ -17,11 +17,13 @@ import { MailError, buildStatusMail, mailProvider, sendMail } from "../lib/mail.
 import type { Registration } from "../../db/schema.js";
 import { json, error, str, logError } from "../lib/http.js";
 const LABELS: Record<keyof typeof DEFAULT_EVENT, string> = {
-  name: "Name", date: "Datum", time: "Uhrzeit", location: "Ort", senderEmail: "Absenderadresse", senderName: "Absendername", paymentUrl: "Zahlungslink", welcomeText: "Startseiten-Text", welcomeImage: "Startseiten-Bild", paymentProvider: "Zahlungsart",
+  name: "Name", date: "Datum", time: "Uhrzeit", location: "Ort", senderEmail: "Absenderadresse", senderName: "Absendername", paymentUrl: "Zahlungslink", welcomeText: "Startseiten-Text", welcomeImage: "Startseiten-Bild", showLegal: "Impressum/Datenschutz im Footer", imprintText: "Impressum", privacyText: "Datenschutzerklärung", paymentProvider: "Zahlungsart",
   ticketPrice: "Ticketpreis", smtpHost: "SMTP-Server", smtpPort: "SMTP-Port", smtpSecurity: "SMTP-Verschlüsselung", smtpUser: "SMTP-Benutzer", smtpPassword: "SMTP-Passwort",
   stripeSecretKey: "Stripe-Secret-Key", paypalClientId: "PayPal-Client-ID", paypalClientSecret: "PayPal-Secret", paypalMode: "PayPal-Modus",
 };
 const SECURITY = ["starttls", "ssl"];
+/** Max length of the free-text settings (others: 1000). */
+const LONG_TEXT: Partial<Record<keyof typeof DEFAULT_EVENT, number>> = { welcomeText: 5000, imprintText: 30000, privacyText: 100000 };
 
 /** Settings as sent to the admin UI – the SMTP password never leaves the server. */
 /** Secret settings: never sent to the browser, stored encrypted; empty = keep, `<key>Clear` = remove. */
@@ -100,7 +102,7 @@ export default async (req: Request) => {
     }
     if (req.method === "GET") {
       const s = await getEvent();
-      return json(admin ? await forAdmin(s) : { settings: { name: s.name, date: s.date, time: s.time, location: s.location, ticketPrice: s.ticketPrice, welcomeText: s.welcomeText, welcomeImage: s.welcomeImage } });
+      return json(admin ? await forAdmin(s) : { settings: { name: s.name, date: s.date, time: s.time, location: s.location, ticketPrice: s.ticketPrice, welcomeText: s.welcomeText, welcomeImage: s.welcomeImage, showLegal: s.showLegal, imprintText: s.imprintText, privacyText: s.privacyText } });
     }
     if (!session || req.method !== "PUT") return error("Methode nicht erlaubt.", 405);
     // Whole body (incl. SMTP password) arrives encrypted from the browser.
@@ -109,7 +111,7 @@ export default async (req: Request) => {
     const s = { ...DEFAULT_EVENT };
     for (const key of Object.keys(s) as (keyof typeof s)[]) {
       if ((SECRET_KEYS as readonly string[]).includes(key)) continue;
-      if (typeof body[key] !== "string" || (body[key] as string).length > (key === "welcomeText" ? 5000 : 1000)) return error("Ungültige Einstellungen.", 422);
+      if (typeof body[key] !== "string" || (body[key] as string).length > (LONG_TEXT[key] ?? 1000)) return error("Ungültige Einstellungen.", 422);
       s[key] = (body[key] as string).trim();
     }
     // Secrets (any length) are encrypted: empty = keep, `<key>Clear: true` = remove.
@@ -122,6 +124,7 @@ export default async (req: Request) => {
     if (!s.name || !s.location || !/^\d{4}-\d{2}-\d{2}$/.test(s.date) || Number.isNaN(Date.parse(s.date)) || new Date(s.date).toISOString().slice(0,10) !== s.date || (s.time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(s.time))) return error("Bitte Name, gültiges Datum, Uhrzeit und Ort prüfen.", 422);
     if ((s.senderEmail && validateEmail(s.senderEmail)) || /[\r\n<>]/.test(s.senderName) || !s.senderName) return error("Bitte gültigen Absender eintragen.", 422);
     if (s.welcomeImage && !/^[0-9a-f-]{36}$/.test(s.welcomeImage)) return error("Ungültiges Startseiten-Bild.", 422);
+    if (!["an", "aus"].includes(s.showLegal)) return error("Ungültige Footer-Einstellung.", 422);
     if (s.paymentProvider === "link") s.paymentProvider = "online"; // retired mode: checkout is the standard
     if (!["online", ...PAYMENT_PROVIDERS].includes(s.paymentProvider)) return error("Ungültige Zahlungsart.", 422);
     const creds = await paymentCredentials(s);
@@ -164,7 +167,7 @@ export default async (req: Request) => {
     await db.insert(eventSettings).values({ id: 1, ...row }).onConflictDoUpdate({ target: eventSettings.id, set: row });
     const changes = (Object.keys(LABELS) as (keyof typeof s)[])
       .filter((k) => before[k] !== s[k])
-      .map((k) => ((SECRET_KEYS as readonly string[]).includes(k) ? `${LABELS[k]} ${s[k] ? "geändert" : "entfernt"}` : `${LABELS[k]}: „${before[k] || "–"}“ → „${s[k] || "–"}“`));
+      .map((k) => ((SECRET_KEYS as readonly string[]).includes(k) || k === "imprintText" || k === "privacyText" ? `${LABELS[k]} ${s[k] ? "geändert" : "entfernt"}` : `${LABELS[k]}: „${before[k] || "–"}“ → „${s[k] || "–"}“`));
     const previous: Record<string, unknown> = Object.fromEntries((Object.keys(LABELS) as (keyof typeof s)[]).filter((k) => before[k] !== s[k]).map((k) => [k, before[k]]));
     if (productChanged) {
       changes.push(...(describeProductChanges(beforeProduct, product).map((c) => `Checkout: ${c}`)));

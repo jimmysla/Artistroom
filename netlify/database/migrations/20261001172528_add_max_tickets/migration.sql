@@ -1,0 +1,1 @@
+ALTER TABLE "event_settings" ADD COLUMN "max_tickets" text DEFAULT '' NOT NULL;

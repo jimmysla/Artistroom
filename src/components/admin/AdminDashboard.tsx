@@ -8,7 +8,8 @@ import AuditLog from "./AuditLog";
 import UserManagement from "./UserManagement";
 import SiteSettings from "./SiteSettings";
 import { can, type AdminIdentity, type Permission } from "../../../shared/admin";
-import { EventMeta, useCategories } from "../../lib/event";
+import { EventMeta, announceEventChange, useCategories } from "../../lib/event";
+import { TicketsTakenContext } from "./StatusActions";
 import Button from "../Button";
 import Alert from "../Alert";
 import Spinner from "../Spinner";
@@ -17,7 +18,7 @@ import RegistrationList from "./RegistrationList";
 import RegistrationDetail from "./RegistrationDetail";
 import ConfirmDialog from "./ConfirmDialog";
 import { api, ApiError, REGISTRATION_CHANNEL, type Registration } from "../../lib/api";
-import { STATUSES, formatRegistrationNumber, matchesStatus, ACCEPTED_ICON } from "../../../shared/registration";
+import { STATUSES, formatRegistrationNumber, matchesStatus, ACCEPTED_ICON, ACCEPTED_STATUSES } from "../../../shared/registration";
 
 const POLL_MS = 5_000;
 
@@ -214,7 +215,10 @@ export default function AdminDashboard({ user, onLoggedOut }: Props) {
       setRows((r) => r?.map((x) => (x.id === registration.id ? registration : x)) ?? null);
       setDetail((d) => (d?.id === registration.id ? registration : d));
       setToast({ tone: "success", text: "Status aktualisiert · E-Mail an den Versanddienst übergeben" });
+      // Approvals can reach the ticket limit → open registration pages pick up „Ausverkauft“ at once.
+      announceEventChange();
     } catch (err) {
+      if (err instanceof ApiError && err.status === 409) { void load(true); announceEventChange(); }
       handleError(err, "Status konnte nicht geändert werden.");
       throw err;
     }
@@ -246,7 +250,11 @@ export default function AdminDashboard({ user, onLoggedOut }: Props) {
     }
   };
 
+  // Places taken by accepted registrations (kostenlos + zahlungspflichtig) for the ticket limit.
+  const ticketsTaken = rows ? rows.filter((r) => (ACCEPTED_STATUSES as readonly string[]).includes(r.status)).length : null;
+
   return (
+    <TicketsTakenContext.Provider value={ticketsTaken}>
     <div className="page admin-page">
       <header className="admin-topbar">
         <div className="admin-topbar-inner">
@@ -462,5 +470,6 @@ export default function AdminDashboard({ user, onLoggedOut }: Props) {
         </div>
       )}
     </div>
+    </TicketsTakenContext.Provider>
   );
 }

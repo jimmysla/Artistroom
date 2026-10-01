@@ -1,4 +1,4 @@
-import { useCategories } from "../../lib/event";
+import { useCategories, useEvent } from "../../lib/event";
 import { formatNet, matchesStatus, statusIcon } from "../../../shared/registration";
 import type { Registration } from "../../lib/api";
 
@@ -31,6 +31,9 @@ export default function StatsOverview({ rows, activeStatus, activeCategory, onSe
   const amount = (status: string) => rows.filter((r) => r.status === status).reduce((sum, r) => sum + (r.amountCents ?? 0), 0);
   const decided = total - count("ausstehend");
   const toggle = (id: string) => onSelectStatus(activeStatus === id ? "" : id);
+  // Ticket limit (Einstellungen → Tickets): accepted = kostenlos + zahlungspflichtig.
+  const maxTickets = useEvent()?.ticketLimit ?? null;
+  const taken = count("angenommen");
 
   return (
     <section className="overview" aria-label="Anmeldungen im Überblick">
@@ -39,6 +42,12 @@ export default function StatsOverview({ rows, activeStatus, activeCategory, onSe
           📊 <strong>{decided}</strong> von {total} Anmeldung{total === 1 ? "" : "en"} entschieden
           <span className="muted"> · {pct(decided)} %</span>
         </div>
+        {maxTickets != null && (
+          <div className={`ticket-usage ${taken >= maxTickets ? "is-sold-out" : ""}`}>
+            {taken >= maxTickets ? "🚫 Ausverkauft" : "🎟️ Tickets"} · <strong>{taken}</strong> / {maxTickets} vergeben
+            {taken < maxTickets && <span className="muted"> · noch {maxTickets - taken} frei</span>}
+          </div>
+        )}
         <button type="button" className="overview-all" aria-pressed={!activeStatus} onClick={() => onSelectStatus("")}>
           Alle anzeigen <strong>{total}</strong>
         </button>

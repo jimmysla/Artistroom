@@ -23,16 +23,17 @@ type Section = "event" | "email" | "survey" | "reset";
  * Parts that can be saved on their own: only their keys are taken from the form, everything else
  * is sent as last saved – so unsaved edits in other parts are neither stored nor lost.
  */
-type Part = "event" | "price" | "payment" | "mailbox" | "templates" | "survey";
+type Part = "event" | "price" | "tickets" | "payment" | "mailbox" | "templates" | "survey";
 const PART_KEYS: Record<Part, (keyof Settings)[]> = {
   event: ["name", "date", "time", "location"],
   price: ["ticketPrice"],
+  tickets: ["maxTickets"],
   payment: ["paymentUrl", "stripeSecretKey", "paypalClientId", "paypalClientSecret", "paypalMode"],
   mailbox: ["senderName", "senderEmail", "smtpHost", "smtpPort", "smtpSecurity", "smtpUser", "smtpPassword"],
   templates: [],
   survey: [],
 };
-const PART_LABELS: Record<Part, string> = { event: "Veranstaltung", price: "Ticketpreis", payment: "Zahlung", mailbox: "Postfach & Absender", templates: "E-Mail-Vorlagen", survey: "Umfrage" };
+const PART_LABELS: Record<Part, string> = { event: "Veranstaltung", price: "Ticketpreis", tickets: "Tickets", payment: "Zahlung", mailbox: "Postfach & Absender", templates: "E-Mail-Vorlagen", survey: "Umfrage" };
 
 interface Props {
   isSuper: boolean;
@@ -220,6 +221,22 @@ export default function EventSettings({ isSuper, registrationCount, onReset }: P
             hint: <>💡 Hinweis: Nur die Zahl eintragen (z. B. <strong>15</strong> oder <strong>12,50</strong>), ohne €-Zeichen. Genau dieser Betrag wird bei „Zahlung anfordern“ automatisch verwendet – ohne Preisfeld. Ohne Ticketpreis kann keine Zahlung angefordert werden.</>,
           })}
         </div>{partBar("price")}</Fold>
+
+        <Fold title="Tickets">
+        <div className="settings-fields">
+          {field("maxTickets", "Maximale Ticketanzahl", "text", false, {
+            placeholder: "leer = unbegrenzt",
+            inputMode: "numeric",
+            hint: <>🎟️ Gezählt werden alle genehmigten Anmeldungen: <strong>Kostenlos</strong> + <strong>zahlungspflichtig</strong> (Zahlung ausstehend und bezahlt). Ist die Anzahl erreicht, wird das Anmeldeformular ausgegraut und zeigt <strong>„Ausverkauft“</strong> – und im Dashboard kann niemand mehr genehmigt werden. Leer lassen = unbegrenzt.</>,
+          })}
+        </div>
+        {meta.tickets.max != null && (
+          <p className={`ticket-usage ${meta.tickets.soldOut ? "is-sold-out" : ""}`} role="status">
+            {meta.tickets.soldOut ? "🚫 Ausverkauft" : "🎟️ Verfügbar"} · <strong>{meta.tickets.taken}</strong> von {meta.tickets.max} Tickets vergeben
+            {!meta.tickets.soldOut && <> · noch {meta.tickets.max - (meta.tickets.taken ?? 0)} frei</>}
+          </p>
+        )}
+        {partBar("tickets")}</Fold>
 
         <Fold title="Zahlung">
         <p className="muted small">Die Zahlungs-E-Mail verlinkt immer auf die Checkout-Seite (Menü „Warenkorb“). Dort wählt der Gast selbst, ob er mit Stripe oder PayPal bezahlt – angeboten wird jeder Anbieter, dessen Zugangsdaten hier eingetragen sind. Nach der serverseitigen Bestätigung wird die Anmeldung automatisch auf „Bezahlt“ gesetzt und das Ticket verschickt; bis dahin steht sie auf „Zahlung ausstehend“.</p>

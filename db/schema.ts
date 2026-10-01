@@ -75,6 +75,8 @@ export const eventSettings = pgTable("event_settings", {
   paymentProvider: text("payment_provider").notNull().default("link"),
   // Default amount (e.g. "15" or "12,50") prefilled when requesting a payment.
   ticketPrice: text("ticket_price").notNull().default(""),
+  // Maximum number of tickets (kostenlos + zahlungspflichtig) as a whole number; "" = unlimited.
+  maxTickets: text("max_tickets").notNull().default(""),
   // Own mailbox via SMTP; when set it replaces Resend. Password is stored encrypted (enc$v1$…).
   smtpHost: text("smtp_host").notNull().default(""),
   smtpPort: text("smtp_port").notNull().default("587"),

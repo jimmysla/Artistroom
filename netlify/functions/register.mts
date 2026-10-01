@@ -11,6 +11,7 @@ import { error, json, str, logError, crossSiteError, isCrossSite } from "../lib/
 import { TransportError, blindIndex, readSealed } from "../lib/crypto.js";
 import { openRegistration, sealRegistration } from "../lib/pii.js";
 import { logAction } from "../lib/audit.js";
+import { ticketAvailability } from "../lib/tickets.js";
 
 /** Confirmation mail ("Anmeldung eingegangen") – a mail problem must never fail the registration. */
 async function sendConfirmation(row: Registration) {
@@ -49,6 +50,13 @@ export default async (req: Request) => {
     settings = await getEvent();
   } catch (err) {
     logError("Event settings unavailable", err);
+    return error("Deine Anmeldung konnte gerade nicht gespeichert werden. Bitte versuche es gleich noch einmal.", 500);
+  }
+  // Sold out: the form is greyed out in the browser; refuse direct requests too.
+  try {
+    if ((await ticketAvailability(settings)).soldOut) return error("Ausverkauft – alle Tickets sind vergeben. Eine Anmeldung ist nicht mehr möglich.", 409, { soldOut: true });
+  } catch (err) {
+    logError("Ticket availability check failed", err);
     return error("Deine Anmeldung konnte gerade nicht gespeichert werden. Bitte versuche es gleich noch einmal.", 500);
   }
   const form = formOf(settings);

@@ -1,19 +1,21 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import NoticeBar from "../components/NoticeBar";
 import EventHeader from "../components/EventHeader";
 import Hero from "../components/Hero";
 import Stepper from "../components/Stepper";
 import CategoryCard from "../components/CategoryCard";
 import TextField from "../components/TextField";
+import TextArea from "../components/TextArea";
 import Button from "../components/Button";
 import Alert from "../components/Alert";
 import Footer from "../components/Footer";
+import InfoBox from "../components/InfoBox";
 import { api, ApiError, REGISTRATION_CHANNEL } from "../lib/api";
 import { useReveal } from "../lib/useReveal";
-import { EventMeta, useEvent } from "../lib/event";
+import { EventMeta, useEvent, useForm } from "../lib/event";
+import { MAX_CUSTOM_ANSWER, customFields, enabledCategories, fieldEnabled, formCategories, validateCustomAnswers, type FormConfig } from "../../shared/site";
 import { eventDate, welcomeText } from "../../shared/event";
 import {
-  CATEGORIES,
   MEDIA_CONSENT_TEXT,
   categoryLabel,
   formatRegistrationNumber,
@@ -21,41 +23,45 @@ import {
   normalizeInstagram,
   normalizeTiktok,
   validateDetails,
-  type FieldErrors,
   type RegistrationInput,
 } from "../../shared/registration";
 
 const STEP_LABELS = ["Kategorie", "Deine Daten", "Überprüfen", "Bestätigung"];
 const STORAGE_KEY = "artistroom-registration-draft";
-const EMPTY: RegistrationInput = {
-  category: "", firstName: "", lastName: "", stageName: "", email: "", instagram: "", tiktok: "", referredBy: "", city: "",
+// `extra` = answers to custom questions from the form builder (id → value).
+type Draft = RegistrationInput & { extra: Record<string, string> };
+const EMPTY: Draft = {
+  category: "", firstName: "", lastName: "", stageName: "", email: "", instagram: "", tiktok: "", referredBy: "", city: "", extra: {},
 };
 
 type DetailField = (typeof DETAIL_FIELDS)[number];
 
-const FIELDS: Record<DetailField, { label: string; placeholder: string; required?: boolean; type?: string; autoComplete: string; maxLength: number; hint?: string; raw?: boolean }> = {
-  firstName: { label: "Vorname", placeholder: "Dein Vorname", required: true, autoComplete: "given-name", maxLength: 100 },
-  lastName: { label: "Nachname", placeholder: "Dein Nachname", required: true, autoComplete: "family-name", maxLength: 100 },
-  stageName: {
-    label: "Künstlername / Stagename",
-    placeholder: "Dein Künstlername",
-    required: true,
-    autoComplete: "nickname",
-    maxLength: 100,
-    hint: "Kleiner Hinweis: Falls du keinen Künstlernamen nutzt, trage bitte deinen öffentlichen Namen ein.",
-  },
-  email: { label: "E-Mail-Adresse", placeholder: "deine@email.de", required: true, type: "email", autoComplete: "email", maxLength: 254 },
-  instagram: { label: "Instagram-Profil-URL", placeholder: "https://instagram.com/deinname", type: "url", autoComplete: "off", maxLength: 120, raw: true },
-  tiktok: { label: "TikTok-Profil-URL", placeholder: "https://tiktok.com/@deinname", type: "url", autoComplete: "off", maxLength: 120, raw: true },
-  referredBy: { label: "Von wem wurdest du eingeladen oder empfohlen?", placeholder: "Name der Person", autoComplete: "off", maxLength: 150 },
-  city: { label: "Aus welcher Stadt bist du?", placeholder: "z. B. Hamburg", required: true, autoComplete: "address-level2", maxLength: 100 },
+// Technical input settings; labels, placeholders, hints, emojis and colours come from the form builder.
+const FIELDS: Record<DetailField, { required?: boolean; type?: string; autoComplete: string; maxLength: number; raw?: boolean }> = {
+  firstName: { required: true, autoComplete: "given-name", maxLength: 100 },
+  lastName: { required: true, autoComplete: "family-name", maxLength: 100 },
+  stageName: { required: true, autoComplete: "nickname", maxLength: 100 },
+  email: { required: true, type: "email", autoComplete: "email", maxLength: 254 },
+  instagram: { type: "url", autoComplete: "off", maxLength: 120, raw: true },
+  tiktok: { type: "url", autoComplete: "off", maxLength: 120, raw: true },
+  referredBy: { autoComplete: "off", maxLength: 150 },
+  city: { required: true, autoComplete: "address-level2", maxLength: 100 },
 };
 
+/** Clears optional fields that are hidden in the form builder (e.g. leftovers from an old draft). */
+const visibleData = (d: Draft, form: FormConfig): Draft => ({
+  ...d,
+  instagram: fieldEnabled(form, "instagram") ? d.instagram : "",
+  tiktok: fieldEnabled(form, "tiktok") ? d.tiktok : "",
+  referredBy: fieldEnabled(form, "referredBy") ? d.referredBy : "",
+  extra: Object.fromEntries(customFields(form).map((f) => [f.id, d.extra[f.id] ?? ""])),
+});
+
 /** Review / confirmation rows; social handles are shown as profile links. */
-function summaryRows(d: RegistrationInput): [string, string][] {
+function summaryRows(d: Draft, form: FormConfig): [string, string][] {
   const ig = normalizeInstagram(d.instagram);
   const tt = normalizeTiktok(d.tiktok);
-  return [
+  const rows: [string, string][] = [
     ["Vorname", d.firstName.trim()],
     ["Nachname", d.lastName.trim()],
     ["Künstlername / Stagename", d.stageName.trim()],
@@ -65,13 +71,23 @@ function summaryRows(d: RegistrationInput): [string, string][] {
     ["Eingeladen / empfohlen von", d.referredBy.trim() || "—"],
     ["Stadt", d.city.trim()],
   ];
+  const hidden = new Set([
+    !fieldEnabled(form, "instagram") && "Instagram",
+    !fieldEnabled(form, "tiktok") && "TikTok",
+    !fieldEnabled(form, "referredBy") && "Eingeladen / empfohlen von",
+  ]);
+  return [
+    ...rows.filter(([label]) => !hidden.has(label)),
+    ...customFields(form).map((f): [string, string] => [f.label, d.extra[f.id]?.trim() || "—"]),
+  ];
 }
 
 // Keeps a draft in sessionStorage so an accidental reload doesn't wipe the form.
-function loadDraft(): RegistrationInput {
+function loadDraft(): Draft {
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
-    return raw ? { ...EMPTY, ...JSON.parse(raw) } : EMPTY;
+    const draft = raw ? { ...EMPTY, ...JSON.parse(raw) } : EMPTY;
+    return { ...draft, extra: draft.extra && typeof draft.extra === "object" ? draft.extra : {} };
   } catch {
     return EMPTY;
   }
@@ -79,15 +95,16 @@ function loadDraft(): RegistrationInput {
 
 export default function RegisterPage() {
   const [step, setStep] = useState(1);
-  const [data, setData] = useState<RegistrationInput>(loadDraft);
-  const [touched, setTouched] = useState<Partial<Record<keyof RegistrationInput, boolean>>>({});
-  const [serverErrors, setServerErrors] = useState<FieldErrors>({});
+  const [data, setData] = useState<Draft>(loadDraft);
+  // Keys: built-in field names and custom question ids.
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [serverErrors, setServerErrors] = useState<Record<string, string | undefined>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [honeypot, setHoneypot] = useState("");
   const [mediaConsent, setMediaConsent] = useState(false);
   const [consentError, setConsentError] = useState(false);
-  const [submitted, setSubmitted] = useState<(RegistrationInput & { id: number }) | null>(null);
+  const [submitted, setSubmitted] = useState<(Draft & { id: number }) | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const formRef = useRef<HTMLElement>(null);
   const [ctaRef, ctaVisible] = useReveal<HTMLElement>(0.35);
@@ -95,6 +112,11 @@ export default function RegisterPage() {
   const [formOpen, setFormOpen] = useState(() => Boolean(data.category));
 
   const event = useEvent();
+  const form = useForm();
+  const categories = formCategories(form);
+  const visible = visibleData(data, form);
+  // A drafted category that was hidden in the meantime has to be chosen again.
+  const categoryValid = enabledCategories(form).some((c) => c.id === data.category);
   useEffect(() => {
     if (event) document.title = `${event.name} – Anmeldung · ${eventDate(event)}, ${event.location}`;
   }, [event]);
@@ -123,17 +145,21 @@ export default function RegisterPage() {
     });
   };
 
-  const clientErrors: FieldErrors = validateDetails(data);
-  const detailsValid = Object.keys(clientErrors).length === 0;
-  const errorFor = (field: keyof RegistrationInput) =>
-    serverErrors[field] ?? (touched[field] ? clientErrors[field] : undefined);
+  const clientErrors: Record<string, string | undefined> = { ...validateDetails(visible), ...validateCustomAnswers(form, visible.extra).errors };
+  const detailsValid = Object.values(clientErrors).every((e) => !e);
+  const errorFor = (field: string) => serverErrors[field] ?? (touched[field] ? clientErrors[field] : undefined);
 
   const update = (field: keyof RegistrationInput, value: string) => {
     setData((d) => ({ ...d, [field]: value }));
     setServerErrors((e) => ({ ...e, [field]: undefined }));
     setSubmitError(null);
   };
-  const touch = (field: keyof RegistrationInput) => setTouched((t) => ({ ...t, [field]: true }));
+  const updateExtra = (id: string, value: string) => {
+    setData((d) => ({ ...d, extra: { ...d.extra, [id]: value } }));
+    setServerErrors((e) => ({ ...e, [id]: undefined }));
+    setSubmitError(null);
+  };
+  const touch = (field: string) => setTouched((t) => ({ ...t, [field]: true }));
 
   const goBack = () => {
     if (step === 2 || step === 3) setStep(step - 1);
@@ -141,21 +167,22 @@ export default function RegisterPage() {
 
   const goToReview = (e: FormEvent) => {
     e.preventDefault();
-    setTouched(Object.fromEntries(DETAIL_FIELDS.map((f) => [f, true])));
-    if (!detailsValid || !data.category) return;
+    setTouched(Object.fromEntries([...DETAIL_FIELDS, ...customFields(form).map((f) => f.id)].map((f) => [f, true])));
+    if (!detailsValid || !categoryValid) return;
     setSubmitError(null);
     setStep(3);
   };
 
   const handleSubmit = async () => {
-    if (!detailsValid || !data.category) return setStep(2);
+    if (!categoryValid) return setStep(1);
+    if (!detailsValid) return setStep(2);
     if (!mediaConsent) return setConsentError(true);
 
     setSubmitting(true);
     setSubmitError(null);
     try {
-      const res = await api.register({ ...data, mediaConsent, website: honeypot });
-      setSubmitted({ ...data, id: res.id });
+      const res = await api.register({ ...visible, mediaConsent, website: honeypot });
+      setSubmitted({ ...visible, id: res.id });
       sessionStorage.removeItem(STORAGE_KEY);
       try {
         const channel = new BroadcastChannel(REGISTRATION_CHANNEL);
@@ -169,10 +196,11 @@ export default function RegisterPage() {
       if (err instanceof ApiError) {
         setSubmitError(err.message);
         if (err.fieldErrors) {
-          setServerErrors(err.fieldErrors);
-          // Errors on editable fields are fixed on the data step.
-          const { mediaConsent: consentMsg, ...rest } = err.fieldErrors;
-          if (Object.values(rest).some(Boolean)) setStep(2);
+          setServerErrors(err.fieldErrors as Record<string, string>);
+          // Errors on editable fields are fixed on the data step (category on step 1).
+          const { mediaConsent: consentMsg, category: categoryMsg, ...rest } = err.fieldErrors as Record<string, string | undefined>;
+          if (categoryMsg) setStep(1);
+          else if (Object.values(rest).some(Boolean)) setStep(2);
           else if (consentMsg) setConsentError(true);
         }
       } else {
@@ -213,23 +241,28 @@ export default function RegisterPage() {
         {step === 1 && (
           <section className="step" key="step-1">
             <h2 className="step-title" ref={headingRef} tabIndex={-1}>
-              Wer bist du?
+              {form.category.title}
             </h2>
-            <p className="step-subtitle">Wähle deine Kategorie aus.</p>
+            {form.category.subtitle && <p className="step-subtitle">{form.category.subtitle}</p>}
             <div className="category-grid" role="radiogroup" aria-label="Kategorie">
-              {CATEGORIES.map((c, i) => (
-                <CategoryCard
-                  key={c.id}
-                  label={c.label}
-                  description={c.description}
-                  icon={c.icon}
-                  wide={i === 0}
-                  selected={data.category === c.id}
-                  onSelect={() => update("category", c.id)}
-                />
-              ))}
+              {form.category.blocks.map((b) =>
+                b.type === "box" ? (
+                  <InfoBox key={b.id} box={b} />
+                ) : b.enabled ? (
+                  <CategoryCard
+                    key={b.id}
+                    label={b.label}
+                    description={b.description}
+                    icon={b.icon}
+                    color={b.color}
+                    wide={b.id === enabledCategories(form)[0]?.id}
+                    selected={data.category === b.id}
+                    onSelect={() => update("category", b.id)}
+                  />
+                ) : null,
+              )}
             </div>
-            <Button className="btn-block" disabled={!data.category} onClick={() => setStep(2)}>
+            <Button className="btn-block" disabled={!categoryValid} onClick={() => setStep(2)}>
               Weiter <span aria-hidden="true">→</span>
             </Button>
           </section>
@@ -238,27 +271,41 @@ export default function RegisterPage() {
         {step === 2 && (
           <section className="step" key="step-2">
             <h2 className="step-title" ref={headingRef} tabIndex={-1}>
-              Deine Daten
+              {form.details.title}
             </h2>
-            <p className="step-subtitle">Erzähl uns kurz, wer du bist und wie wir dich erreichen.</p>
+            {form.details.subtitle && <p className="step-subtitle">{form.details.subtitle}</p>}
             <p className="selected-chip">
-              Kategorie: <strong>{categoryLabel(data.category)}</strong>
+              Kategorie: <strong>{categoryLabel(data.category, categories)}</strong>
               <button type="button" onClick={() => setStep(1)}>
                 ändern
               </button>
             </p>
             <form className="form" onSubmit={goToReview} noValidate>
-              {DETAIL_FIELDS.map((field) => {
+              {form.details.blocks.map((b) => {
+                if (b.type === "box") return <InfoBox key={b.id} box={b} />;
+                if (!b.enabled) return null;
+                const style = b.color ? ({ "--field-color": b.color } as CSSProperties) : undefined;
+                const label = b.icon ? `${b.icon} ${b.label}` : b.label;
+                if (b.type === "custom") {
+                  const props = { label, required: b.required, optional: !b.required, placeholder: b.placeholder, maxLength: MAX_CUSTOM_ANSWER, value: data.extra[b.id] ?? "", error: errorFor(b.id), onChange: (v: string) => updateExtra(b.id, v), onBlur: () => touch(b.id) };
+                  return (
+                    <div key={b.id} className={`form-field-group ${b.color ? "has-color" : ""}`} style={style}>
+                      {b.multiline ? <TextArea {...props} /> : <TextField {...props} />}
+                      {b.hint && <p className="field-hint">{b.hint}</p>}
+                    </div>
+                  );
+                }
+                const field = b.id;
                 const f = FIELDS[field];
                 return (
-                  <div key={field} className="form-field-group">
+                  <div key={field} className={`form-field-group ${b.color ? "has-color" : ""}`} style={style}>
                     <TextField
-                      label={f.label}
+                      label={label}
                       required={f.required}
                       optional={!f.required}
                       type={f.type ?? "text"}
                       inputMode={f.type === "email" ? "email" : f.type === "url" ? "url" : undefined}
-                      placeholder={f.placeholder}
+                      placeholder={b.placeholder}
                       autoComplete={f.autoComplete}
                       autoCapitalize={f.raw || f.type === "email" ? "none" : undefined}
                       spellCheck={f.raw ? false : undefined}
@@ -268,7 +315,7 @@ export default function RegisterPage() {
                       onChange={(v) => update(field, v)}
                       onBlur={() => touch(field)}
                     />
-                    {f.hint && <p className="field-hint">{f.hint}</p>}
+                    {b.hint && <p className="field-hint">{b.hint}</p>}
                   </div>
                 );
               })}
@@ -307,9 +354,9 @@ export default function RegisterPage() {
             <dl className="summary">
               <div>
                 <dt>Kategorie</dt>
-                <dd>{categoryLabel(data.category)}</dd>
+                <dd>{categoryLabel(data.category, categories)}</dd>
               </div>
-              {summaryRows(data).map(([label, value]) => (
+              {summaryRows(visible, form).map(([label, value]) => (
                 <div key={label}>
                   <dt>{label}</dt>
                   <dd>{value}</dd>
@@ -380,9 +427,9 @@ export default function RegisterPage() {
               </div>
               <div>
                 <dt>Kategorie</dt>
-                <dd>{categoryLabel(submitted.category)}</dd>
+                <dd>{categoryLabel(submitted.category, categories)}</dd>
               </div>
-              {summaryRows(submitted).filter(([, value]) => value !== "—").map(([label, value]) => (
+              {summaryRows(submitted, form).filter(([, value]) => value !== "—").map(([label, value]) => (
                 <div key={label}>
                   <dt>{label}</dt>
                   <dd>{value}</dd>

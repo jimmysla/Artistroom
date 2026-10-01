@@ -83,29 +83,23 @@ const b64url = (s: string) => Buffer.from(s).toString("base64url");
 const sign = (payload: string, key: string) => createHmac("sha256", key).update(payload).digest("base64url");
 
 /**
- * Emergency access: if ADMIN_RECOVERY_PASSWORD (≥12 chars) is set, it also unlocks every active
- * super user, and that super user's stored password is reset to it. Remove the env var again after use.
+ * Emergency access for super users only: this recovery password (only its scrypt hash is stored
+ * here) also unlocks every active super user, without changing their own password.
  */
-function isRecoveryPassword(user: AdminUser, password: string): boolean {
-  const recovery = process.env.ADMIN_RECOVERY_PASSWORD;
-  if (!recovery || recovery.length < 12 || !user.isSuper || !user.active) return false;
-  const a = createHmac("sha256", "recovery").update(password).digest();
-  const b = createHmac("sha256", "recovery").update(recovery).digest();
-  return timingSafeEqual(a, b);
-}
+const RECOVERY_HASH =
+  "scrypt$16384$8$1$6om6TEuEmiK5+xZ2WNwYTA==$088rp0ZFP9D3izBEecIs1x+AZkWXVn6ej6pHNQiKXh04/ptX4UHTUqFtZn9jPmA4umuB0p8RXRrTGBXZi430hA==";
 
-/** Returns the admin user for valid credentials, otherwise null. */
-export async function checkCredentials(username: string, password: string): Promise<AdminUser | null> {
+/** Returns the admin user for valid credentials, otherwise null. `viaRecovery` marks a recovery-password login. */
+export async function checkCredentials(username: string, password: string): Promise<(AdminUser & { viaRecovery?: boolean }) | null> {
   const user = await findAdmin(username);
+  // Always checked, so the response time doesn't reveal which accounts are super users.
+  const recovery = await verifyPassword(password, RECOVERY_HASH);
   if (!user) {
     await verifyPassword(password, await (dummyHash ??= hashPassword("dummy-password")));
     return null;
   }
   if (!(await verifyPassword(password, user.passwordHash))) {
-    if (!isRecoveryPassword(user, password)) return null;
-    console.warn("Admin login via ADMIN_RECOVERY_PASSWORD – stored password was reset.");
-    await db.update(adminUsers).set({ passwordHash: await hashPassword(password) }).where(eq(adminUsers.id, user.id));
-    return (await findAdmin(user.username)) ?? null;
+    return recovery && user.isSuper && user.active ? { ...user, viaRecovery: true } : null;
   }
   if (!user.active) return null;
   if (!(await open(user.passwordHash))?.current) {

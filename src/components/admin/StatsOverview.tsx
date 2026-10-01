@@ -1,4 +1,5 @@
-import { CATEGORIES, formatNet, matchesStatus, statusIcon } from "../../../shared/registration";
+import { useCategories } from "../../lib/event";
+import { formatNet, matchesStatus, statusIcon } from "../../../shared/registration";
 import type { Registration } from "../../lib/api";
 
 interface Props {
@@ -22,6 +23,8 @@ const TILES = [
 const SEGMENTS = ["kostenlos", "zahlung_angefordert", "bezahlt", "abgelehnt", "ausstehend"] as const;
 
 export default function StatsOverview({ rows, activeStatus, activeCategory, onSelectStatus, onSelectCategory }: Props) {
+  // Hidden categories only show up while they still have registrations.
+  const categories = useCategories().filter((c) => c.enabled || rows.some((r) => r.category === c.id));
   const total = rows.length;
   const count = (id: string) => rows.filter((r) => matchesStatus(r.status, id)).length;
   const pct = (n: number) => (total ? Math.round((n / total) * 100) : 0);
@@ -93,7 +96,7 @@ export default function StatsOverview({ rows, activeStatus, activeCategory, onSe
       </div>
 
       <div className="category-chips" role="group" aria-label="Kategorien">
-        {CATEGORIES.map((c) => (
+        {categories.map((c) => (
           <button
             key={c.id}
             className={`category-chip ${activeCategory === c.id ? "is-active" : ""}`}

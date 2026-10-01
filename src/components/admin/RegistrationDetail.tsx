@@ -3,8 +3,10 @@ import Modal from "../Modal";
 import Button from "../Button";
 import StatusBadge from "./StatusBadge";
 import StatusActions from "./StatusActions";
-import { CATEGORIES, formatRegistrationNumber, instagramUrl, tiktokUrl, isFinalStatus } from "../../../shared/registration";
+import { formatRegistrationNumber, instagramUrl, tiktokUrl, isFinalStatus } from "../../../shared/registration";
 import { formatDateTime, type Registration } from "../../lib/api";
+import { useCategories } from "../../lib/event";
+import { parseExtra } from "../../../shared/site";
 
 interface Props {
   registration: Registration;
@@ -15,7 +17,7 @@ interface Props {
 }
 
 export default function RegistrationDetail({ registration: r, onClose, onDelete, onStatusChange }: Props) {
-  const category = CATEGORIES.find((c) => c.id === r.category);
+  const category = useCategories().find((c) => c.id === r.category);
 
   return (
     <Modal title="Anmeldung" onClose={onClose}>
@@ -84,6 +86,12 @@ export default function RegistrationDetail({ registration: r, onClose, onDelete,
           <dt>Foto/Video</dt>
           <dd>{r.mediaConsentAt ? `Eingewilligt am ${formatDateTime(r.mediaConsentAt)}` : "—"}</dd>
         </div>
+        {parseExtra(r.extra).map((a) => (
+          <div key={a.id}>
+            <dt>{a.label}</dt>
+            <dd className="pre-line">{a.value}</dd>
+          </div>
+        ))}
       </dl>
 
       <Ticket registration={r} />

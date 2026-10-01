@@ -21,7 +21,7 @@ export type UndoData =
   | { kind: "user_created"; id: number }
   | { kind: "user_changed"; id: number; before: Partial<Pick<AdminUser, "permissions" | "isSuper" | "active" | "passwordHash">> }
   | { kind: "user_deleted"; row: AdminUser }
-  | { kind: "settings"; before: Partial<EventSettings> & { mailTemplates?: Record<string, unknown> | null; survey?: Record<string, unknown> | null; product?: Record<string, unknown> | null } };
+  | { kind: "settings"; before: Partial<EventSettings> & { mailTemplates?: Record<string, unknown> | null; survey?: Record<string, unknown> | null; product?: Record<string, unknown> | null; formConfig?: Record<string, unknown> | null; legal?: Record<string, unknown> | null; checkinDesign?: Record<string, unknown> | null } };
 
 /** Permission needed to undo each kind (on top of "logging"). */
 const PERMISSION: Record<UndoData["kind"], Permission | "super"> = {

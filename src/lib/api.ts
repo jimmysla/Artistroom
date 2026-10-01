@@ -4,7 +4,13 @@ import type { Survey, SurveyAnswers } from "../../shared/survey";
 import type { Product } from "../../shared/product";
 import type { FieldErrors, RegistrationInput } from "../../shared/registration";
 import type { AdminIdentity, Permission } from "../../shared/admin";
+import type { CheckinDesign, FormConfig, Legal } from "../../shared/site";
 import { SecureContextError, seal } from "./secure";
+export interface SiteConfig {
+  form: FormConfig;
+  legal: Legal;
+  checkin: CheckinDesign;
+}
 
 export interface MailImage {
   id: string;
@@ -72,6 +78,8 @@ export interface Registration {
   tiktok: string | null;
   referredBy: string | null;
   city: string | null;
+  /** Answers to custom form questions (JSON, see parseExtra in shared/site.ts). */
+  extra: string | null;
   status: string;
   mediaConsentAt: string | null;
   amountCents: number | null;
@@ -143,7 +151,10 @@ export const api = {
   places: (q: string, session: string) =>
     request<{ source: "google" | "osm"; suggestions: PlaceSuggestion[] }>(`/api/admin/places?${new URLSearchParams({ q, session })}`),
   checkin: (ticket: string, confirm = false) => request<{ registration: Registration; alreadyCheckedIn: boolean }>("/api/admin/checkin", { method: "POST", body: JSON.stringify({ ticket, confirm }) }),
-  register: (input: RegistrationInput & { mediaConsent: boolean; website?: string }) =>
+  siteConfig: () => request<SiteConfig>("/api/admin/site"),
+  saveSiteConfig: (config: Partial<SiteConfig>) => request<SiteConfig>("/api/admin/site", { method: "PUT", body: JSON.stringify(config) }),
+  legal: (page: string) => request<{ title: string; text: string; event: string }>(`/api/legal/${encodeURIComponent(page)}`),
+  register: (input: RegistrationInput & { extra: Record<string, string>; mediaConsent: boolean; website?: string }) =>
     sealedRequest<{ ok: true; id: number }>("/api/registrations", "POST", { ...input }),
 
   session: () => request<{ authenticated: boolean; user?: AdminIdentity }>("/api/admin/session"),

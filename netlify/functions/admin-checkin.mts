@@ -6,6 +6,7 @@ import { categoryLabel, formatRegistrationNumber, statusLabel } from "../../shar
 import { requireAdmin } from "../lib/auth.js";
 import { logAction } from "../lib/audit.js";
 import { openRegistration } from "../lib/pii.js";
+import { categoriesOf, getEvent } from "../lib/event.js";
 import type { UndoData } from "../lib/undo.js";
 import { error, json, readJson } from "../lib/http.js";
 // Rows are stored with encrypted personal data – decrypt before showing or logging.
@@ -22,6 +23,7 @@ export default async (req: Request) => {
   try {
     if (req.method !== "POST") return error("Methode nicht erlaubt.", 405);
     const body = await readJson(req);
+    const categories = categoriesOf(await getEvent());
     if (typeof body?.ticket !== "string" || !/^artistroom:[0-9a-f-]{36}$/.test(body.ticket)) {
       await log("qr_ungueltig", null, "Kein gültiges Artistroom-Ticket");
       return error("Kein gültiges Artistroom-Ticket.", 422);
@@ -37,12 +39,12 @@ export default async (req: Request) => {
       return error("Dieses Ticket ist nicht für den Einlass freigegeben.", 409);
     }
     if (body.confirm !== true) {
-      await log("qr_gescannt", found, `${categoryLabel(found.category)} · ${found.checkedInAt ? "bereits eingecheckt" : "noch nicht eingecheckt"}`);
+      await log("qr_gescannt", found, `${categoryLabel(found.category, categories)} · ${found.checkedInAt ? "bereits eingecheckt" : "noch nicht eingecheckt"}`);
       return json({ registration: found, alreadyCheckedIn: Boolean(found.checkedInAt) });
     }
     const updated = await first(db.update(registrations).set({ checkedInAt: new Date() }).where(and(eq(registrations.ticketToken, token), isNull(registrations.checkedInAt), inArray(registrations.status, ["kostenlos", "bezahlt"]))).returning());
     if (updated) {
-      await log("checkin_bestaetigt", updated, categoryLabel(updated.category), { kind: "checkin", id: updated.id });
+      await log("checkin_bestaetigt", updated, categoryLabel(updated.category, categories), { kind: "checkin", id: updated.id });
       return json({ registration: updated, alreadyCheckedIn: false });
     }
     const current = await first(db.select().from(registrations).where(eq(registrations.ticketToken, token)));

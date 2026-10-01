@@ -42,7 +42,9 @@ export const MAX_AMOUNT_CENTS = 1_000_000;
 
 export type StatusId = (typeof STATUSES)[number]["id"];
 
-export const categoryLabel = (id: string) => CATEGORIES.find((c) => c.id === id)?.label ?? id;
+/** Label for a category id; pass the configured categories (form builder) where available. */
+export const categoryLabel = (id: string, categories: readonly { id: string; label: string }[] = CATEGORIES) =>
+  categories.find((c) => c.id === id)?.label ?? CATEGORIES.find((c) => c.id === id)?.label ?? id;
 export const statusLabel = (id: string) => STATUSES.find((s) => s.id === id)?.label ?? id;
 export const statusIcon = (id: string): string =>
   id === "angenommen" ? ACCEPTED_ICON : (STATUSES.find((s) => s.id === id)?.icon ?? "•");

@@ -7,10 +7,10 @@ interface Props {
   onChange: (patch: Partial<MailDesign>) => void;
 }
 
-const MAX_BYTES = 3 * 1024 * 1024;
+export const MAX_BYTES = 3 * 1024 * 1024;
 const imageUrl = (id: string) => `/api/mail-images/${id}`;
 
-const toBase64 = (file: File) =>
+export const toBase64 = (file: File) =>
   new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");

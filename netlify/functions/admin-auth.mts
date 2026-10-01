@@ -55,7 +55,7 @@ export default async (req: Request) => {
         return error(locked ? "Zu viele Fehlversuche. Bitte in 15 Minuten erneut versuchen." : "Benutzername oder Passwort ist falsch.", locked ? 429 : 401);
       }
       await clearFailures(name);
-      await logAction({ username: user.username, action: "login" });
+      await logAction({ username: user.username, action: "login", details: user.viaRecovery ? "Mit Recovery-Passwort (nur SuperUser)" : null });
       return json({ ok: true, user: toIdentity(user) }, 200, {
         "Set-Cookie": createSessionCookie(user, secure),
       });

@@ -14,16 +14,17 @@ import { error, json, logError, readJson, str } from "../lib/http.js";
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 import { randomUUID } from "node:crypto";
-import { getEvent } from "../lib/event.js";
+import { categoriesOf, getEvent } from "../lib/event.js";
+import { parseExtra, type CategoryBlock } from "../../shared/site.js";
 import { buildStatusMail, checkMailConfig, sendMail, sendStatusMail, MailError } from "../lib/mail.js";
 
-function toCsv(rows: Registration[]): string {
+function toCsv(rows: Registration[], categories: CategoryBlock[]): string {
   const escape = (v: string) => {
     // Neutralise spreadsheet formula injection and quote every cell.
     const safe = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
     return `"${safe.replace(/"/g, '""')}"`;
   };
-  const header = ["Anmeldenummer", "Datum", "Künstlername", "Vorname", "Nachname", "E-Mail", "Instagram", "TikTok", "Eingeladen / empfohlen von", "Stadt", "Kategorie", "Status", "Betrag (EUR)", "Foto/Video-Einwilligung", "Check-in", "E-Mail versendet"];
+  const header = ["Anmeldenummer", "Datum", "Künstlername", "Vorname", "Nachname", "E-Mail", "Instagram", "TikTok", "Eingeladen / empfohlen von", "Stadt", "Kategorie", "Status", "Betrag (EUR)", "Foto/Video-Einwilligung", "Check-in", "E-Mail versendet", "Weitere Angaben"];
   const lines = rows.map((r) =>
     [
       formatRegistrationNumber(r.id),
@@ -36,12 +37,13 @@ function toCsv(rows: Registration[]): string {
       r.tiktok ? tiktokUrl(r.tiktok) : "",
       r.referredBy ?? "",
       r.city ?? "",
-      categoryLabel(r.category),
+      categoryLabel(r.category, categories),
       statusLabel(r.status),
       r.amountCents != null ? (r.amountCents / 100).toFixed(2).replace(".", ",") : "",
       r.mediaConsentAt ? new Date(r.mediaConsentAt).toISOString() : "",
       r.checkedInAt ? new Date(r.checkedInAt).toISOString() : "",
       r.emailSentAt ? new Date(r.emailSentAt).toISOString() : "",
+      parseExtra(r.extra).map((a) => `${a.label}: ${a.value}`).join(" | "),
     ]
       .map(escape)
       .join(";"),
@@ -119,7 +121,7 @@ export default async (req: Request, context: Context) => {
       if (isCsv) {
         await logAction({ username: actor, action: "csv_export", details: `${rows.length} Anmeldung(en)` });
         const date = new Date().toISOString().slice(0, 10);
-        return new Response(toCsv(rows), {
+        return new Response(toCsv(rows, categoriesOf(await getEvent())), {
           headers: {
             "Content-Type": "text/csv; charset=utf-8",
             "Content-Disposition": `attachment; filename="artistroom-anmeldungen-${date}.csv"`,
@@ -216,7 +218,7 @@ export default async (req: Request, context: Context) => {
       if (!deleted) return error("Anmeldung nicht gefunden.", 404);
       const row = await openRegistration(deleted);
       // The undo snapshot keeps the encrypted row as stored.
-      await logAction({ username: actor, action: "anmeldung_geloescht", target: target(row), details: `${categoryLabel(row.category)} · ${row.email}`, registrationId: row.id, undo: { kind: "registration_deleted", row: deleted } });
+      await logAction({ username: actor, action: "anmeldung_geloescht", target: target(row), details: `${categoryLabel(row.category, categoriesOf(await getEvent()))} · ${row.email}`, registrationId: row.id, undo: { kind: "registration_deleted", row: deleted } });
       return json({ ok: true });
     }
 

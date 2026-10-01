@@ -6,8 +6,9 @@ import SurveyResults from "./SurveyResults";
 import CartSettings from "./CartSettings";
 import AuditLog from "./AuditLog";
 import UserManagement from "./UserManagement";
+import SiteSettings from "./SiteSettings";
 import { can, type AdminIdentity, type Permission } from "../../../shared/admin";
-import { EventMeta } from "../../lib/event";
+import { EventMeta, useCategories } from "../../lib/event";
 import Button from "../Button";
 import Alert from "../Alert";
 import Spinner from "../Spinner";
@@ -16,7 +17,7 @@ import RegistrationList from "./RegistrationList";
 import RegistrationDetail from "./RegistrationDetail";
 import ConfirmDialog from "./ConfirmDialog";
 import { api, ApiError, REGISTRATION_CHANNEL, type Registration } from "../../lib/api";
-import { CATEGORIES, STATUSES, formatRegistrationNumber, matchesStatus, ACCEPTED_ICON } from "../../../shared/registration";
+import { STATUSES, formatRegistrationNumber, matchesStatus, ACCEPTED_ICON } from "../../../shared/registration";
 
 const POLL_MS = 5_000;
 
@@ -39,11 +40,13 @@ const TABS: { id: string; label: string; permission: Permission | "super" }[] = 
   { id: "settings", label: "Einstellungen", permission: "einstellungen" },
   { id: "survey", label: "Umfrage", permission: "umfrage" },
   { id: "logging", label: "Logging", permission: "logging" },
+  { id: "design", label: "Gestaltung", permission: "super" },
   { id: "users", label: "Benutzer", permission: "super" },
 ];
 
 export default function AdminDashboard({ user, onLoggedOut }: Props) {
   const username = user.username;
+  const categories = useCategories();
   const [menuOpen, setMenuOpen] = useState(() => localStorage.getItem("menu-open") !== "0");
   const toggleMenu = (open: boolean) => {
     setMenuOpen(open);
@@ -276,6 +279,7 @@ export default function AdminDashboard({ user, onLoggedOut }: Props) {
             : <button type="button" aria-current="page" onClick={() => toggleMenu(true)}>{tabs.find((t) => t.id === tab)?.label ?? "Menü"} ▾</button>}
         </nav>
         {!tab ? <div className="card empty-state"><h2>Keine Berechtigungen</h2><p className="muted">Deinem Konto sind noch keine Bereiche freigegeben. Bitte wende dich an einen Super User.</p></div>
+        : tab === "design" ? <SiteSettings onUnauthorized={onLoggedOut} />
         : tab === "users" ? <UserManagement currentUser={username} onUnauthorized={onLoggedOut} />
         : tab === "logging" ? <AuditLog onUnauthorized={onLoggedOut} />
         : tab === "survey" ? <SurveyResults onUnauthorized={onLoggedOut} />
@@ -363,7 +367,7 @@ export default function AdminDashboard({ user, onLoggedOut }: Props) {
                 <span className="sr-only">Kategorie</span>
                 <select className="input input-sm" value={category} onChange={(e) => setCategory(e.target.value)}>
                   <option value="">Alle Kategorien</option>
-                  {CATEGORIES.map((c) => (
+                  {categories.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.label}
                     </option>

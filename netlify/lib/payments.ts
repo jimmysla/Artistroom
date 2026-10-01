@@ -133,13 +133,12 @@ export async function grossAmount(netCents: number): Promise<number> {
   return priceBreakdown(netCents, normalizeProduct("product" in event ? event.product : null).vatRate).gross;
 }
 
-/** Providers the payer may choose on the checkout page (setting "online" = all configured ones). */
+/** Providers the payer may choose on the checkout page (always all configured ones). */
 export async function allowedProviders(): Promise<PaymentProvider[]> {
   const event = await getEvent();
   const c = await paymentCredentials(event);
-  // Only "stripe"/"paypal" restrict the choice; "online" and the retired "link" mode offer all configured providers.
-  const wanted: PaymentProvider[] = isPaymentProvider(event.paymentProvider) ? [event.paymentProvider] : [...PAYMENT_PROVIDERS];
-  return wanted.filter((p) => providerConfigured(p, c));
+  // The payer always chooses among every configured provider (old fixed "stripe"/"paypal" settings are ignored).
+  return PAYMENT_PROVIDERS.filter((p) => providerConfigured(p, c));
 }
 
 interface CheckoutRequest {

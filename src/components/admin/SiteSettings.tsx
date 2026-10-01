@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, ApiError, type MailImage, type SiteConfig } from "../../lib/api";
 import { announceEventChange } from "../../lib/event";
+import { DEFAULT_WELCOME_TEXT } from "../../../shared/event";
 import Alert from "../Alert";
 import Button from "../Button";
 import Fold from "../Fold";
@@ -15,17 +16,18 @@ import {
 } from "../../../shared/site";
 import { LEGAL_PAGES, SCAN_ANIMATIONS, type CheckinDesign, type LegalPage, type ScanAnimation, type ScanState } from "../../../shared/site";
 
-type Section = "form" | "checkin" | "legal";
+type Section = "home" | "form" | "checkin" | "legal";
 const SECTIONS: { id: Section; label: string }[] = [
+  { id: "home", label: "🏠 Startseite" },
   { id: "form", label: "📝 Anmeldung (Baukasten)" },
   { id: "checkin", label: "🎟️ Check-in-Bildschirm" },
   { id: "legal", label: "⚖️ Impressum & Datenschutz" },
 ];
-const SAVE_KEY: Record<Section, keyof SiteConfig> = { form: "form", checkin: "checkin", legal: "legal" };
+const SAVE_KEY: Record<Section, keyof SiteConfig> = { home: "home", form: "form", checkin: "checkin", legal: "legal" };
 
-/** Dashboard → Gestaltung (super users): form builder, check-in scan screen, legal pages. */
+/** Dashboard → Gestaltung (super users): home page welcome block, form builder, check-in scan screen, legal pages. */
 export default function SiteSettings({ onUnauthorized }: { onUnauthorized: () => void }) {
-  const [section, setSection] = useState<Section>("form");
+  const [section, setSection] = useState<Section>("home");
   const [config, setConfig] = useState<SiteConfig | null>(null);
   const [dirty, setDirty] = useState<Partial<Record<Section, boolean>>>({});
   const [busy, setBusy] = useState(false);
@@ -64,7 +66,7 @@ export default function SiteSettings({ onUnauthorized }: { onUnauthorized: () =>
   return (
     <section className="settings-panel">
       <h1>Gestaltung</h1>
-      <p className="muted">Nur für Super User: Anmeldeformular als Baukasten, Check-in-Bildschirm nach dem QR-Scan sowie Impressum und Datenschutzerklärung.</p>
+      <p className="muted">Nur für Super User: Startseite, Anmeldeformular als Baukasten, Check-in-Bildschirm nach dem QR-Scan sowie Impressum und Datenschutzerklärung.</p>
       <nav className="settings-tabs" aria-label="Gestaltungsbereiche">
         {SECTIONS.map((s) => (
           <button key={s.id} type="button" aria-current={section === s.id ? "page" : undefined} onClick={() => { setSection(s.id); setMessage(""); setError(""); }}>
@@ -75,17 +77,44 @@ export default function SiteSettings({ onUnauthorized }: { onUnauthorized: () =>
       {error && <Alert>{error}</Alert>}
       {!config ? (!error && <p role="status">Wird geladen…</p>) : (
         <>
+          {section === "home" && <HomeEditor value={config.home} onChange={(v) => change("home", v, "home")} />}
           {section === "form" && <FormBuilder value={config.form} onChange={(v) => change("form", v, "form")} />}
           {section === "checkin" && <CheckinDesigner value={config.checkin} onChange={(v) => change("checkin", v, "checkin")} onError={setError} />}
           {section === "legal" && <LegalEditor value={config.legal} onChange={(v) => change("legal", v, "legal")} />}
           <div className="settings-save">
             <Button type="button" loading={busy} onClick={save}>Speichern</Button>
-            {section === "form" && <a className="muted small" href="/" target="_blank" rel="noopener">Startseite in neuem Tab öffnen ↗</a>}
+            {(section === "home" || section === "form") && <a className="muted small" href="/" target="_blank" rel="noopener">Startseite in neuem Tab öffnen ↗</a>}
             {message && <p role="status">{message}</p>}
           </div>
         </>
       )}
     </section>
+  );
+}
+
+function HomeEditor({ value, onChange }: { value: SiteConfig["home"]; onChange: (v: SiteConfig["home"]) => void }) {
+  const [images, setImages] = useState<MailImage[]>([]);
+  useEffect(() => { api.mailImages().then((r) => setImages(r.images)).catch(() => {}); }, []);
+  return (
+    <>
+      <p className="muted small">Bild und Text stehen auf der Startseite unter dem Scroll-Hinweis, direkt über dem Button „Zur Anmeldung“. Das Bild steht links und passt sich der Bildschirmgröße an.</p>
+      <div className="settings-fields">
+        <label className="settings-field">
+          Bild (hochgeladen unter Einstellungen → E-Mail → Bilder &amp; Logos)
+          <select className="input" value={value.welcomeImage} onChange={(e) => onChange({ ...value, welcomeImage: e.target.value })}>
+            <option value="">– kein Bild –</option>
+            {images.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
+            {value.welcomeImage && !images.some((i) => i.id === value.welcomeImage) && <option value={value.welcomeImage}>Aktuelles Bild</option>}
+          </select>
+        </label>
+        {value.welcomeImage ? <img className="welcome-thumb" src={`/api/mail-images/${value.welcomeImage}`} alt="Vorschau Startseiten-Bild" /> : <span />}
+        <label className="settings-field is-wide">
+          Text
+          <textarea className="input" rows={8} maxLength={5000} placeholder={DEFAULT_WELCOME_TEXT} value={value.welcomeText} onChange={(e) => onChange({ ...value, welcomeText: e.target.value })} />
+          <span className="field-hint">Leer lassen = Standardtext. Erste Zeile = Überschrift, jede weitere Zeile ein Absatz. <code>{"{ticketpreis}"}</code> wird durch den Ticketpreis ersetzt (z. B. „22 € zzgl. Steuern“).</span>
+        </label>
+      </div>
+    </>
   );
 }
 

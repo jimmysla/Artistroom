@@ -2161,23 +2161,7 @@ input[type="date"]::-webkit-calendar-picker-indicator {
 .reset-auth { display: flex; flex-direction: column; gap: 12px; margin: 0; padding: 14px; border: 1px solid color-mix(in srgb, var(--st-abgelehnt) 40%, var(--border)); border-radius: var(--radius-sm); }
 .reset-auth legend { padding: 0 6px; font-size: .82rem; font-weight: 600; color: var(--st-abgelehnt); }
 
-/* ---------- Settings: location with Google Maps ---------- */
-.location-field, .settings-field.is-wide { grid-column: 1 / -1; }
-.location-combobox { position: relative; }
-.location-loading { position: absolute; right: 12px; top: 50%; width: 14px; height: 14px; margin-top: -7px; border: 2px solid var(--border-strong); border-top-color: var(--purple-400); border-radius: 50%; animation: spin .8s linear infinite; }
-.location-list {
-  position: absolute; z-index: 30; inset: calc(100% + 4px) 0 auto;
-  margin: 0; padding: 4px; list-style: none;
-  background: var(--bg-raised); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
-  box-shadow: 0 14px 40px rgba(0, 0, 0, .6);
-  max-height: 300px; overflow-y: auto;
-}
-.location-list li[role="option"] { display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; border-radius: 6px; cursor: pointer; }
-.location-list li[role="option"] > span:last-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.location-list li[role="option"] strong { font-weight: 600; color: var(--text); }
-.location-list li[role="option"] small { color: var(--muted); font-size: .78rem; }
-.location-list li.is-active { background: var(--purple-deep); }
-.location-attribution { padding: 6px 10px 4px; color: var(--subtle); font-size: .7rem; text-align: right; }
+.settings-field.is-wide { grid-column: 1 / -1; }
 .undo-warning { display: block; margin-top: 12px; padding: 10px 12px; border-left: 3px solid var(--st-ausstehend); border-radius: 0 8px 8px 0; background: color-mix(in srgb, var(--st-ausstehend) 12%, transparent); color: var(--st-ausstehend); font-weight: 600; }
 .undo-warning::before { content: "⚠️ "; }
 .undo-check { color: var(--muted); }

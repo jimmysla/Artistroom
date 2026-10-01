@@ -1,12 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { api, ApiError, type AdminSettings, type MailImage, type SecretKey } from "../../lib/api";
+import { api, ApiError, type AdminSettings, type SecretKey } from "../../lib/api";
 import { announceEventChange } from "../../lib/event";
-import { DEFAULT_WELCOME_TEXT, type EventSettings as Settings } from "../../../shared/event";
+import type { EventSettings as Settings } from "../../../shared/event";
 import { TEMPLATE_LABELS, type MailTemplates, type TemplateStatus } from "../../../shared/mail-template";
 import Button from "../Button";
 import Alert from "../Alert";
 import Fold from "../Fold";
-import LocationField from "./LocationField";
 import MailTemplateEditor from "./MailTemplateEditor";
 import SurveyEditor from "./SurveyEditor";
 import type { Survey } from "../../../shared/survey";
@@ -24,17 +23,16 @@ type Section = "event" | "email" | "survey" | "reset";
  * Parts that can be saved on their own: only their keys are taken from the form, everything else
  * is sent as last saved – so unsaved edits in other parts are neither stored nor lost.
  */
-type Part = "event" | "home" | "price" | "payment" | "mailbox" | "templates" | "survey";
+type Part = "event" | "price" | "payment" | "mailbox" | "templates" | "survey";
 const PART_KEYS: Record<Part, (keyof Settings)[]> = {
   event: ["name", "date", "time", "location"],
-  home: ["welcomeText", "welcomeImage"],
   price: ["ticketPrice"],
-  payment: ["paymentProvider", "paymentUrl", "stripeSecretKey", "paypalClientId", "paypalClientSecret", "paypalMode"],
+  payment: ["paymentUrl", "stripeSecretKey", "paypalClientId", "paypalClientSecret", "paypalMode"],
   mailbox: ["senderName", "senderEmail", "smtpHost", "smtpPort", "smtpSecurity", "smtpUser", "smtpPassword"],
   templates: [],
   survey: [],
 };
-const PART_LABELS: Record<Part, string> = { event: "Veranstaltung", home: "Startseite", price: "Ticketpreis", payment: "Zahlung", mailbox: "Postfach & Absender", templates: "E-Mail-Vorlagen", survey: "Umfrage" };
+const PART_LABELS: Record<Part, string> = { event: "Veranstaltung", price: "Ticketpreis", payment: "Zahlung", mailbox: "Postfach & Absender", templates: "E-Mail-Vorlagen", survey: "Umfrage" };
 
 interface Props {
   isSuper: boolean;
@@ -50,7 +48,6 @@ export default function EventSettings({ isSuper, registrationCount, onReset }: P
   const [survey, setSurvey] = useState<Survey | null>(null);
   const [product, setProduct] = useState<Product | null>(null);
   // Product is edited in the menu "Warenkorb"; kept here so saving the settings doesn't drop it.
-  const [homeImages, setHomeImages] = useState<MailImage[]>([]);
   const [surveyDirty, setSurveyDirty] = useState(false);
   const [meta, setMeta] = useState<Omit<AdminSettings, "settings" | "mailTemplates"> | null>(null);
   // Last state from the server – base for saving single parts.
@@ -213,28 +210,7 @@ export default function EventSettings({ isSuper, registrationCount, onReset }: P
       </div>
     ) : !settings || !meta || !templates ? (!error && <p role="status">Einstellungen werden geladen…</p>) : <form onSubmit={save}>
       {section === "event" && <>
-        <Fold title="Veranstaltung"><div className="settings-fields">{field("name", "Veranstaltungsname", "text", true, { wide: true })}{field("date", "Datum", "date", true)}{field("time", "Uhrzeit (Europe/Berlin)", "time")}<LocationField value={settings.location} onChange={(v) => set("location", v)} /></div>{partBar("event")}</Fold>
-
-        <Fold title="Startseite">
-        <p className="muted small">Bild und Text stehen auf der Startseite unter dem Scroll-Hinweis, direkt über dem Button „Zur Anmeldung“. Das Bild steht links und passt sich der Bildschirmgröße an.</p>
-        <div className="settings-fields">
-          <label className="settings-field">
-            Bild (hochgeladen unter E-Mail → Bilder &amp; Logos)
-            <select className="input" value={settings.welcomeImage} onFocus={() => !homeImages.length && api.mailImages().then(r => setHomeImages(r.images)).catch(() => {})} onChange={e => set("welcomeImage", e.target.value)}>
-              <option value="">– kein Bild –</option>
-              {homeImages.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
-              {settings.welcomeImage && !homeImages.some(i => i.id === settings.welcomeImage) && <option value={settings.welcomeImage}>Aktuelles Bild</option>}
-            </select>
-          </label>
-          {settings.welcomeImage ? <img className="welcome-thumb" src={`/api/mail-images/${settings.welcomeImage}`} alt="Vorschau Startseiten-Bild" /> : <span />}
-          <label className="settings-field is-wide">
-            Text
-            <textarea className="input" rows={8} maxLength={5000} placeholder={DEFAULT_WELCOME_TEXT} value={settings.welcomeText} onChange={e => set("welcomeText", e.target.value)} />
-            <span className="field-hint">Leer lassen = Standardtext. Erste Zeile = Überschrift, jede weitere Zeile ein Absatz. <code>{"{ticketpreis}"}</code> wird durch den Ticketpreis ersetzt (z. B. „22 € zzgl. Steuern“).</span>
-          </label>
-        </div>
-        {partBar("home")}
-        </Fold>
+        <Fold title="Veranstaltung"><div className="settings-fields">{field("name", "Veranstaltungsname", "text", true, { wide: true })}{field("date", "Datum", "date", true)}{field("time", "Uhrzeit (Europe/Berlin)", "time")}{field("location", "Ort / Adresse", "text", true, { wide: true, placeholder: "z. B. Spitalerstraße 3, Hamburg" })}</div>{partBar("event")}</Fold>
 
         <Fold title="Ticketpreis">
         <div className="settings-fields">
@@ -246,21 +222,7 @@ export default function EventSettings({ isSuper, registrationCount, onReset }: P
         </div>{partBar("price")}</Fold>
 
         <Fold title="Zahlung">
-        <div className="settings-fields">
-          <label className="settings-field is-wide">
-            Zahlungsart für kostenpflichtige Tickets
-            <select className="input" value={settings.paymentProvider === "link" ? "online" : settings.paymentProvider} onChange={e => set("paymentProvider", e.target.value)}>
-              <option value="stripe" disabled={!stripeReady}>💳 Stripe – erkennt Zahlungen automatisch{stripeReady ? "" : " (Zugangsdaten unten eintragen)"}</option>
-              <option value="paypal" disabled={!paypalReady}>🅿️ PayPal – erkennt Zahlungen automatisch{paypalReady ? "" : " (Zugangsdaten unten eintragen)"}</option>
-              <option value="online" disabled={!stripeReady && !paypalReady}>🛒 Stripe + PayPal – Gast wählt im Checkout{stripeReady || paypalReady ? "" : " (Zugangsdaten unten eintragen)"}</option>
-            </select>
-            <span className="field-hint">
-              {`Standard-Zahlungslink ist immer die Checkout-Seite (Menü „Warenkorb“). Die E-Mail enthält den Link dorthin. Dort wird über ${settings.paymentProvider === "stripe" ? "Stripe" : settings.paymentProvider === "paypal" ? "PayPal" : "Stripe oder PayPal"} bezahlt und die Seite wartet auf die serverseitige Bestätigung. Danach wird die Anmeldung automatisch auf „Bezahlt“ gesetzt und das Ticket verschickt. Bis dahin steht der Status auf „Zahlung ausstehend“ – manuelles Markieren als bezahlt gibt es nicht.`}
-</span>
-          </label>
-        </div>
-
-
+        <p className="muted small">Die Zahlungs-E-Mail verlinkt immer auf die Checkout-Seite (Menü „Warenkorb“). Dort wählt der Gast selbst, ob er mit Stripe oder PayPal bezahlt – angeboten wird jeder Anbieter, dessen Zugangsdaten hier eingetragen sind. Nach der serverseitigen Bestätigung wird die Anmeldung automatisch auf „Bezahlt“ gesetzt und das Ticket verschickt; bis dahin steht sie auf „Zahlung ausstehend“.</p>
         <h3 className="settings-sub">💳 Stripe</h3>
         <p className="muted small">Secret Key aus dem Stripe-Dashboard → Entwickler → API-Schlüssel (<code>sk_live_…</code> oder zum Testen <code>sk_test_…</code>). Wird verschlüsselt gespeichert.</p>
         <div className="settings-fields">

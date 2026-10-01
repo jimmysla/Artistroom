@@ -10,7 +10,7 @@ import { formOf, getEvent } from "../lib/event.js";
 import { normalizeLegal } from "../../shared/site.js";
 import { describeProductChanges, describeSurveyChanges, describeTemplateChanges } from "../lib/diff.js";
 import { createTestCheckout } from "../lib/test-checkout.js";
-import { PAYMENT_PROVIDERS, PaymentError, isPaymentProvider, paymentCredentials, providerConfigured, testProvider } from "../lib/payments.js";
+import { PaymentError, isPaymentProvider, paymentCredentials, providerConfigured, testProvider } from "../lib/payments.js";
 import { isTemplateStatus, normalizeMailTemplates } from "../../shared/mail-template.js";
 import { normalizeSurvey } from "../../shared/survey.js";
 import { normalizeProduct } from "../../shared/product.js";
@@ -123,17 +123,15 @@ export default async (req: Request) => {
     // Each area is only validated when one of its fields changed, so e.g. the mailbox can be saved
     // although Stripe/PayPal (or any other area) isn't set up yet.
     const changed = (...keys: (keyof typeof s)[]) => keys.some((k) => s[k] !== before[k]);
-    if (s.paymentProvider === "link") s.paymentProvider = "online"; // retired mode: checkout is the standard
+    // The guest always picks Stripe/PayPal in the checkout – no fixed provider any more.
+    s.paymentProvider = "online";
+    // The home page block is edited in Dashboard → Gestaltung; never overwrite it with a stale form.
+    s.welcomeText = before.welcomeText;
+    s.welcomeImage = before.welcomeImage;
     if (changed("paypalMode") && !["live", "sandbox"].includes(s.paypalMode)) return error("Ungültiger PayPal-Modus.", 422);
 
     if (changed("name", "date", "time", "location") && (!s.name || !s.location || !/^\d{4}-\d{2}-\d{2}$/.test(s.date) || Number.isNaN(Date.parse(s.date)) || new Date(s.date).toISOString().slice(0,10) !== s.date || (s.time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(s.time)))) return error("Bitte Name, gültiges Datum, Uhrzeit und Ort prüfen.", 422);
     if (changed("senderName", "senderEmail") && ((s.senderEmail && validateEmail(s.senderEmail)) || /[\r\n<>]/.test(s.senderName) || !s.senderName)) return error("Bitte gültigen Absender eintragen.", 422);
-    if (changed("welcomeImage") && s.welcomeImage && !/^[0-9a-f-]{36}$/.test(s.welcomeImage)) return error("Ungültiges Startseiten-Bild.", 422);
-    if (changed("paymentProvider") && !["online", ...PAYMENT_PROVIDERS].includes(s.paymentProvider)) return error("Ungültige Zahlungsart.", 422);
-    // "online" = whatever provider is configured (none yet is fine – credentials can be added later).
-    // Only an explicitly chosen single provider must be set up, and only when that choice changes.
-    const creds = await paymentCredentials(s);
-    if (changed("paymentProvider") && isPaymentProvider(s.paymentProvider) && !providerConfigured(s.paymentProvider, creds)) return error(`${s.paymentProvider === "stripe" ? "Stripe" : "PayPal"} ist noch nicht eingerichtet – bitte zuerst die Zugangsdaten unten eintragen.`, 422);
     if (changed("paymentUrl") && s.paymentUrl && !validPaymentUrl(s.paymentUrl)) return error("Der Zahlungslink muss eine gültige HTTPS-Adresse sein.", 422);
     if (changed("ticketPrice") && s.ticketPrice) {
       const cents = parseEuroToCents(s.ticketPrice);

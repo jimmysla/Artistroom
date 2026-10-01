@@ -10,6 +10,8 @@ export interface SiteConfig {
   form: FormConfig;
   legal: Legal;
   checkin: CheckinDesign;
+  /** Home page welcome block ({ticketpreis} placeholder, image = mail-images id). */
+  home: { welcomeText: string; welcomeImage: string };
 }
 
 export interface MailImage {
@@ -18,13 +20,6 @@ export interface MailImage {
   type: string;
   size: number;
   createdAt: string;
-}
-
-export interface PlaceSuggestion {
-  placeId: string;
-  text: string;
-  main: string;
-  secondary: string;
 }
 
 export type SecretKey = "smtpPassword" | "stripeSecretKey" | "paypalClientSecret";
@@ -148,8 +143,6 @@ export const api = {
   testPayment: (provider: "stripe" | "paypal", settings: Pick<EventSettings, "stripeSecretKey" | "paypalClientId" | "paypalClientSecret" | "paypalMode">) =>
     sealedRequest<{ ok: true; message: string }>("/api/admin/settings/test-payment", "POST", { provider, ...settings }),
   testMail: (to: string, template?: string) => sealedRequest<{ ok: true }>("/api/admin/settings/test-mail", "POST", { to, template }),
-  places: (q: string, session: string) =>
-    request<{ source: "google" | "osm"; suggestions: PlaceSuggestion[] }>(`/api/admin/places?${new URLSearchParams({ q, session })}`),
   checkin: (ticket: string, confirm = false) => request<{ registration: Registration; alreadyCheckedIn: boolean }>("/api/admin/checkin", { method: "POST", body: JSON.stringify({ ticket, confirm }) }),
   siteConfig: () => request<SiteConfig>("/api/admin/site"),
   saveSiteConfig: (config: Partial<SiteConfig>) => request<SiteConfig>("/api/admin/site", { method: "PUT", body: JSON.stringify(config) }),

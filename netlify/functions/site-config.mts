@@ -10,7 +10,7 @@ import { error, json, logError, readJson } from "../lib/http.js";
 
 /*
  * Site configuration (Dashboard → Gestaltung): form builder, Impressum / Datenschutz and the
- * check-in scan screen. Public: GET /api/legal/:page. Admin: GET (any admin – the check-in tab
+ * check-in scan screen plus the home page welcome block. Public: GET /api/legal/:page. Admin: GET (any admin – the check-in tab
  * needs the scan design), PUT super users only.
  */
 const SECTIONS = {
@@ -21,7 +21,13 @@ const SECTIONS = {
 type Section = keyof typeof SECTIONS;
 
 const stored = (s: object, key: Section) => (key in s ? ((s as Record<string, unknown>)[key] ?? null) : null) as Record<string, unknown> | null;
-const forAdmin = (s: object) => ({
+// Home page welcome block (plain columns, not jsonb): text with {ticketpreis} placeholder + mail-images id.
+const HOME_KEYS = ["welcomeText", "welcomeImage"] as const;
+const HOME_LABELS = { welcomeText: "Startseiten-Text", welcomeImage: "Startseiten-Bild" } as const;
+type Home = Record<(typeof HOME_KEYS)[number], string>;
+
+const forAdmin = (s: Home) => ({
+  home: { welcomeText: s.welcomeText, welcomeImage: s.welcomeImage },
   form: normalizeForm(stored(s, "formConfig")),
   legal: normalizeLegal(stored(s, "legal")),
   checkin: normalizeCheckin(stored(s, "checkinDesign")),
@@ -46,9 +52,23 @@ export default async (req: Request) => {
     const body = await readJson(req);
     if (!body) return error("Ungültige Anfrage.", 400);
     const before = await getEvent();
-    const values: Partial<Record<Section, Record<string, unknown>>> = {};
-    const previous: Partial<Record<Section, Record<string, unknown> | null>> = {};
+    const values: Partial<Record<Section, Record<string, unknown>>> & Partial<Home> = {};
+    const previous: Partial<Record<Section, Record<string, unknown> | null>> & Partial<Home> = {};
     const changes: string[] = [];
+    if (body.home !== undefined) {
+      const home = body.home as Record<string, unknown> | null;
+      if (!home || typeof home !== "object") return error("Ungültige Startseite.", 422);
+      for (const key of HOME_KEYS) {
+        const raw = home[key];
+        if (typeof raw !== "string" || raw.length > (key === "welcomeText" ? 5000 : 100)) return error("Ungültige Startseite.", 422);
+        const next = raw.trim();
+        if (key === "welcomeImage" && next && !/^[0-9a-f-]{36}$/.test(next)) return error("Ungültiges Startseiten-Bild.", 422);
+        if (next === before[key]) continue;
+        values[key] = next;
+        previous[key] = before[key];
+        changes.push(`${HOME_LABELS[key]} geändert`);
+      }
+    }
     const incoming: Record<Section, unknown> = { formConfig: body.form, legal: body.legal, checkinDesign: body.checkin };
     for (const key of Object.keys(SECTIONS) as Section[]) {
       if (incoming[key] === undefined) continue;

@@ -446,8 +446,8 @@ export default function AdminDashboard({ user, onLoggedOut }: Props) {
           onCancel={() => setToDelete(null)}
           onConfirm={confirmDelete}
         >
-          Die Anmeldung von <strong>{toDelete.name}</strong> ({toDelete.email}) wird dauerhaft gelöscht. Dies kann nicht
-          rückgängig gemacht werden.
+          Die Anmeldung von <strong>{toDelete.name}</strong> ({toDelete.email}) wird dauerhaft gelöscht – auch alle
+          Log-Einträge zu dieser Person. Dies kann nicht rückgängig gemacht werden.
         </ConfirmDialog>
       )}
 

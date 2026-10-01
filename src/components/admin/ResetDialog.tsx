@@ -41,7 +41,7 @@ export default function ResetDialog({ count, onCancel, onConfirm }: Props) {
       <p className="confirm-text">
         Es werden <strong>alle {count} Anmeldung{count === 1 ? "" : "en"}</strong> inklusive Tickets und Check-ins
         gelöscht. Die Anmeldenummern werden zurückgesetzt – die nächste Anmeldung erhält wieder <strong>#0001</strong>.
-        Im Logging kann das 3 Monate lang rückgängig gemacht werden, solange keine neuen Anmeldungen dieselben Nummern belegen.
+        Alle Log-Einträge zu diesen Personen werden ebenfalls gelöscht – das kann <strong>nicht rückgängig</strong> gemacht werden.
       </p>
       <form
         className="reset-form"

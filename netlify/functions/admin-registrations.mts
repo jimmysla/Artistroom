@@ -7,7 +7,7 @@ import { checkCredentials, requireAdmin } from "../lib/auth.js";
 import { allowedProviders, isPaymentProvider, paymentPageUrl } from "../lib/payments.js";
 import { encryptLegacyRegistrations, openRegistration, openRegistrations } from "../lib/pii.js";
 import { TransportError, readSealed } from "../lib/crypto.js";
-import { logAction } from "../lib/audit.js";
+import { logAction, purgeRegistrationLog } from "../lib/audit.js";
 import { RESET_CONFIRMATION } from "../../shared/admin.js";
 import { error, json, logError, readJson, str } from "../lib/http.js";
 
@@ -91,22 +91,21 @@ export default async (req: Request, context: Context) => {
         await delay(800);
         return error(authorizer ? "Dieses Konto ist kein Super User. Nur Super User dürfen alle Anmeldungen löschen." : "Benutzername oder Passwort ist falsch.", 403, { fieldErrors: { password: "Login fehlgeschlagen" } });
       }
-      // Snapshot first so the reset can be undone from the log.
-      const rows = await db.select().from(registrations);
-      const responses = await db.select().from(surveyResponses);
-      const [settingsRow] = await db.select({ surveySentAt: eventSettings.surveySentAt }).from(eventSettings);
+      const [{ count: rowCount }] = await db.select({ count: sql<number>`count(*)::int` }).from(registrations);
+      const [{ count: responseCount }] = await db.select({ count: sql<number>`count(*)::int` }).from(surveyResponses);
       // Removes every registration and restarts the serial so the next registration is #0001 again.
       await db.execute(sql`TRUNCATE TABLE ${registrations} RESTART IDENTITY`);
       // The survey belongs to the past event too: answers deleted, automatic sending re-armed.
       await db.delete(surveyResponses);
       await db.update(eventSettings).set({ surveySentAt: null });
+      // Final: every log entry about a registration goes too (numbers start again at #0001).
+      await purgeRegistrationLog();
       await logAction({
         username: actor,
         action: "alle_anmeldungen_geloescht",
-        details: `${rows.length} Anmeldung(en) und ${responses.length} Umfrage-Antwort(en) gelöscht, Anmeldenummern zurückgesetzt · bestätigt durch Login von ${authorizer.username}`,
-        undo: { kind: "all_registrations_deleted", rows, surveyResponses: responses, surveySentAt: settingsRow?.surveySentAt?.toISOString() ?? null },
+        details: `${rowCount} Anmeldung(en), ${responseCount} Umfrage-Antwort(en) und alle zugehörigen Log-Einträge endgültig gelöscht, Anmeldenummern zurückgesetzt · bestätigt durch Login von ${authorizer.username}`,
       });
-      return json({ ok: true, deleted: rows.length });
+      return json({ ok: true, deleted: rowCount });
     }
 
     if (!idParam) {
@@ -214,9 +213,9 @@ export default async (req: Request, context: Context) => {
     if (method === "DELETE") {
       const [deleted] = await db.delete(registrations).where(eq(registrations.id, id)).returning();
       if (!deleted) return error("Anmeldung nicht gefunden.", 404);
-      const row = await openRegistration(deleted);
-      // The undo snapshot keeps the encrypted row as stored.
-      await logAction({ username: actor, action: "anmeldung_geloescht", target: target(row), details: `${categoryLabel(row.category)} · ${row.email}`, registrationId: row.id, undo: { kind: "registration_deleted", row: deleted } });
+      // Deleted people vanish from the log entirely; the deletion itself is noted without personal data.
+      await purgeRegistrationLog(deleted.id);
+      await logAction({ username: actor, action: "anmeldung_geloescht", target: formatRegistrationNumber(deleted.id), details: `${categoryLabel(deleted.category)} · Anmeldung und alle zugehörigen Log-Einträge endgültig gelöscht` });
       return json({ ok: true });
     }
 

@@ -17,14 +17,18 @@ Anmeldeseite und Admin-Dashboard für **Artistroom**. Veranstaltungsname, Datum,
 Admin-Konten liegen in der Tabelle `admin_users` der Netlify Database. Passwörter werden **nie im Klartext**
 gespeichert, sondern als gesalzener scrypt-Hash. Das erste Konto (`AdminArtist`) wird per Migration angelegt.
 
-Optional kann `SESSION_SECRET` (≥ 32 Zeichen) gesetzt werden, um Session-Cookies damit zu signieren:
+Vor dem Livegang **beide** Schlüssel als Secret setzen (je ≥ 32 zufällige Zeichen) und eine Kopie sicher aufbewahren:
 
 ```bash
-netlify env:set SESSION_SECRET "$(openssl rand -hex 32)"
+netlify env:set PASSWORD_ENCRYPTION_KEY "$(openssl rand -base64 48)" --secret
+netlify env:set SESSION_SECRET "$(openssl rand -base64 48)" --secret
 ```
 
-Ohne diese Variable wird der Passwort-Hash des Admins als Signaturschlüssel verwendet – ändert sich das Passwort,
-werden bestehende Sessions automatisch ungültig.
+- `PASSWORD_ENCRYPTION_KEY` verschlüsselt Passwort-Hashes, persönliche Daten, Log-Einträge und Zugangsdaten. Ohne ihn liegt
+  der Schlüssel in derselben Datenbank. **Einmal gesetzt, nie mehr ändern oder löschen.** Ältere Daten werden danach automatisch neu verschlüsselt.
+- `SESSION_SECRET` signiert die Login-Cookies (zusammen mit dem Passwort-Hash – eine Passwortänderung beendet weiterhin alle Sessions).
+
+Die Start-Konten `AdminArtist` und `SuperUser` müssen beim ersten Login ein neues Passwort festlegen.
 
 ## Datenbank
 

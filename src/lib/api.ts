@@ -149,6 +149,8 @@ export const api = {
   session: () => request<{ authenticated: boolean; user?: AdminIdentity }>("/api/admin/session"),
   login: (username: string, password: string) => sealedRequest<{ ok: true; user: AdminIdentity }>("/api/admin/login", "POST", { username, password }),
   logout: () => request<{ ok: true }>("/api/admin/logout", { method: "POST" }),
+  changePassword: (currentPassword: string, password: string, passwordConfirm: string) =>
+    sealedRequest<{ ok: true; user: AdminIdentity }>("/api/admin/password", "POST", { currentPassword, password, passwordConfirm }),
 
   listRegistrations: () => request<{ registrations: Registration[] }>("/api/admin/registrations"),
   updateStatus: (id: number, revision: number, status: string, amountCents?: number) =>
@@ -164,8 +166,8 @@ export const api = {
   resetRegistrations: (confirm: string, username: string, password: string) =>
     sealedRequest<{ ok: true; deleted: number }>("/api/admin/registrations/reset", "POST", { confirm, username, password }),
 
-  listUsers: () => request<{ users: AdminAccount[]; encryption: "env" | "db" }>("/api/admin/users"),
-  createUser: (input: { username: string; password: string; passwordConfirm: string; permissions: Permission[]; isSuper: boolean }) =>
+  listUsers: () => request<{ users: AdminAccount[]; encryption: "env" | "db"; sessionSecret: boolean }>("/api/admin/users"),
+  createUser: (input: { username: string; password: string; passwordConfirm: string; permissions: Permission[]; isSuper: boolean; active: boolean }) =>
     sealedRequest<{ user: AdminAccount }>("/api/admin/users", "POST", input),
   updateUser: (id: number, patch: Partial<{ permissions: Permission[]; isSuper: boolean; active: boolean; password: string; passwordConfirm: string }>) =>
     sealedRequest<{ user: AdminAccount }>(`/api/admin/users/${id}`, "PATCH", patch),

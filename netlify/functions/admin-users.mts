@@ -3,10 +3,13 @@ import { and, asc, eq, ne, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { adminUsers, type AdminUser } from "../../db/schema.js";
 import { PERMISSIONS, isPermission, validatePassword, validatePasswordConfirm, validateUsername } from "../../shared/admin.js";
-import { hashPassword, requireAdmin } from "../lib/auth.js";
+import { hashPassword, isSeededPassword, requireAdmin, sessionSecretSet } from "../lib/auth.js";
+import { rekeyAll } from "../lib/rekey.js";
 import { TransportError, encryptionSource, readSealed } from "../lib/crypto.js";
 import { logAction } from "../lib/audit.js";
 import { error, json, str, logError } from "../lib/http.js";
+
+const SEEDED_PASSWORD = "Dieses Passwort ist öffentlich bekannt und darf nicht verwendet werden.";
 
 // Never expose password hashes.
 const publicUser = ({ passwordHash: _hash, ...u }: AdminUser) => u;
@@ -37,8 +40,10 @@ export default async (req: Request, context: Context) => {
   try {
     if (!idParam) {
       if (req.method === "GET") {
+        const rekeyed = await rekeyAll().catch((err) => (logError("Re-encryption failed", err), 0));
+        if (rekeyed) await logAction({ username: null, action: "daten_verschluesselt", details: `${rekeyed} Datensatz/Datensätze mit PASSWORD_ENCRYPTION_KEY neu verschlüsselt` });
         const rows = await db.select().from(adminUsers).orderBy(asc(adminUsers.createdAt));
-        return json({ users: rows.map(publicUser), encryption: await encryptionSource() });
+        return json({ users: rows.map(publicUser), encryption: await encryptionSource(), sessionSecret: sessionSecretSet() });
       }
       if (req.method !== "POST") return error("Methode nicht erlaubt.", 405);
       // The whole body (incl. password) arrives encrypted from the browser (src/lib/secure.ts).
@@ -47,11 +52,13 @@ export default async (req: Request, context: Context) => {
       const password = str(body.password);
       const permissions = parsePermissions(body.permissions ?? []);
       const isSuper = body.isSuper === true;
+      const active = body.active !== false;
       const fieldErrors: Record<string, string> = {};
       const u = validateUsername(username);
       const p = validatePassword(password);
       if (u) fieldErrors.username = u;
       if (p) fieldErrors.password = p;
+      else if (await isSeededPassword(password)) fieldErrors.password = SEEDED_PASSWORD;
       const c = validatePasswordConfirm(password, str(body.passwordConfirm));
       if (c) fieldErrors.passwordConfirm = c;
       if (!permissions) fieldErrors.permissions = "Ungültige Berechtigungen.";
@@ -62,9 +69,9 @@ export default async (req: Request, context: Context) => {
 
       const [created] = await db
         .insert(adminUsers)
-        .values({ username, passwordHash: await hashPassword(password), permissions: isSuper ? [] : permissions!, isSuper })
+        .values({ username, passwordHash: await hashPassword(password), permissions: isSuper ? [] : permissions!, isSuper, active })
         .returning();
-      await logAction({ username: actor, action: "benutzer_erstellt", target: username, details: isSuper ? "Super User" : `Rechte: ${permissionLabels(created.permissions)}`, undo: { kind: "user_created", id: created.id } });
+      await logAction({ username: actor, action: "benutzer_erstellt", target: username, details: `${isSuper ? "Super User" : `Rechte: ${permissionLabels(created.permissions)}`}${active ? "" : " · deaktiviert angelegt"}`, undo: { kind: "user_created", id: created.id } });
       return json({ user: publicUser(created) }, 201);
     }
 
@@ -106,6 +113,7 @@ export default async (req: Request, context: Context) => {
         const password = str(body.password);
         const p = validatePassword(password);
         if (p) return error(p, 422, { fieldErrors: { password: p } });
+        if (await isSeededPassword(password)) return error(SEEDED_PASSWORD, 422, { fieldErrors: { password: SEEDED_PASSWORD } });
         const c = validatePasswordConfirm(password, str(body.passwordConfirm));
         if (c) return error(c, 422, { fieldErrors: { passwordConfirm: c } });
         set.passwordHash = await hashPassword(password);

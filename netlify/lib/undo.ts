@@ -1,6 +1,6 @@
-import { and, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { adminUsers, auditLog, eventSettings, registrations, surveyResponses, type AdminUser, type Registration, type SurveyResponse } from "../../db/schema.js";
+import { adminUsers, auditLog, eventSettings, registrations, type AdminUser, type Registration } from "../../db/schema.js";
 import { can, logActionLabel, type AdminIdentity, type Permission } from "../../shared/admin.js";
 import type { EventSettings } from "../../shared/event.js";
 import { formatNet, formatRegistrationNumber, statusLabel } from "../../shared/registration.js";
@@ -15,8 +15,6 @@ import { sendStatusMail } from "./mail.js";
  */
 export type UndoData =
   | { kind: "status"; id: number; revision: number; before: { status: string; amountCents: number | null } }
-  | { kind: "registration_deleted"; row: Registration }
-  | { kind: "all_registrations_deleted"; rows: Registration[]; surveyResponses?: SurveyResponse[]; surveySentAt?: string | null }
   | { kind: "checkin"; id: number }
   | { kind: "user_created"; id: number }
   | { kind: "user_changed"; id: number; before: Partial<Pick<AdminUser, "permissions" | "isSuper" | "active" | "passwordHash">> }
@@ -26,8 +24,6 @@ export type UndoData =
 /** Permission needed to undo each kind (on top of "logging"). */
 const PERMISSION: Record<UndoData["kind"], Permission | "super"> = {
   status: "status",
-  registration_deleted: "loeschen",
-  all_registrations_deleted: "super",
   checkin: "checkin",
   user_created: "super",
   user_changed: "super",
@@ -42,15 +38,7 @@ export class UndoError extends Error {
   }
 }
 
-// JSON snapshots store timestamps as strings; turn them back into Dates for inserts.
-const date = (v: unknown) => (v ? new Date(v as string) : null);
-const reviveRegistration = (r: Registration): Registration => ({
-  ...r,
-  createdAt: new Date(r.createdAt),
-  mediaConsentAt: date(r.mediaConsentAt),
-  checkedInAt: date(r.checkedInAt),
-  emailSentAt: date(r.emailSentAt),
-});
+// JSON snapshots store timestamps as strings; turn them back into a Date for inserts.
 const reviveUser = (u: AdminUser): AdminUser => ({ ...u, createdAt: new Date(u.createdAt) });
 
 const berlinTime = (d: Date | string) =>
@@ -60,12 +48,6 @@ const statusText = (status: string, amountCents: number | null) =>
   statusLabel(status) + (amountCents != null && ["zahlung_angefordert", "bezahlt"].includes(status) ? ` · ${formatNet(amountCents)}` : "");
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
-
-/** Keeps the serial ahead of restored ids so new registrations don't collide. */
-const syncRegistrationSequence = (tx: Tx) =>
-  tx.execute(
-    sql`select setval(pg_get_serial_sequence('registrations', 'id'), greatest((select coalesce(max(id), 0) from registrations), (select last_value from registrations_id_seq), 1))`,
-  );
 
 const activeSupers = async (tx: Tx) => {
   const [{ count }] = await tx
@@ -103,6 +85,8 @@ export async function undoLogEntry(logId: number, admin: AdminIdentity, options:
   if (entry.undoneAt) throw new UndoError(`Diese Aktion wurde bereits von ${entry.undoneBy ?? "jemandem"} rückgängig gemacht.`);
   const undo = entry.undo as UndoData | null;
   if (!undo) throw new UndoError("Diese Aktion kann nicht rückgängig gemacht werden.", 422);
+  // Deleted registrations can't be restored (they are erased from the log entirely).
+  if (!(undo.kind in PERMISSION)) throw new UndoError("Diese Aktion kann nicht rückgängig gemacht werden.", 422);
   const permission = PERMISSION[undo.kind];
   if (permission === "super" ? !admin.isSuper : !can(admin, permission)) throw new UndoError("Dafür fehlt dir die Berechtigung.", 403);
 
@@ -149,34 +133,6 @@ export async function undoLogEntry(logId: number, admin: AdminIdentity, options:
           details: `Status ${statusText(row.status, row.amountCents)} → ${statusText(updated.status, updated.amountCents)}${options.notify ? ` · E-Mail an ${updated.email}` : " · ohne E-Mail"}`,
           message: `Status von ${target(updated)} auf „${statusLabel(updated.status)}“ zurückgesetzt.`,
         };
-      }
-      case "registration_deleted": {
-        const row = reviveRegistration(undo.row);
-        const [taken] = await tx.select({ id: registrations.id }).from(registrations).where(eq(registrations.id, row.id));
-        if (taken) throw new UndoError(`Die Nummer ${formatRegistrationNumber(row.id)} ist inzwischen neu vergeben – Wiederherstellung nicht möglich.`);
-        await tx.insert(registrations).values(row);
-        await syncRegistrationSequence(tx);
-        const shown = target(await openRegistration(row));
-        return { target: shown, registrationId: row.id, details: "Gelöschte Anmeldung wiederhergestellt", message: `Anmeldung ${shown} wiederhergestellt.` };
-      }
-      case "all_registrations_deleted": {
-        const rows = undo.rows.map(reviveRegistration);
-        if (rows.length) {
-          const taken = await tx.select({ id: registrations.id }).from(registrations).where(inArray(registrations.id, rows.map((r) => r.id)));
-          if (taken.length) throw new UndoError(`Seit dem Löschen sind ${taken.length} neue Anmeldung(en) mit denselben Nummern eingegangen – Wiederherstellung nicht möglich.`);
-          for (let i = 0; i < rows.length; i += 500) await tx.insert(registrations).values(rows.slice(i, i + 500));
-          await syncRegistrationSequence(tx);
-        }
-        // Survey answers of the old event (only if no new answers exist meanwhile).
-        const answers = (undo.surveyResponses ?? []).map((r) => ({ ...r, createdAt: new Date(r.createdAt) }));
-        if (answers.length) {
-          const [{ count }] = await tx.select({ count: sql<number>`count(*)::int` }).from(surveyResponses);
-          if (count) throw new UndoError("Inzwischen gibt es neue Umfrage-Antworten – Wiederherstellung nicht möglich.");
-          await tx.insert(surveyResponses).values(answers);
-          await tx.execute(sql`select setval(pg_get_serial_sequence('survey_responses', 'id'), greatest((select max(id) from survey_responses), 1))`);
-        }
-        if (undo.surveySentAt) await tx.update(eventSettings).set({ surveySentAt: new Date(undo.surveySentAt) });
-        return { target: null, registrationId: null, details: `${rows.length} Anmeldung(en) wiederhergestellt`, message: `${rows.length} Anmeldung(en) wiederhergestellt.` };
       }
       case "checkin": {
         const [row] = await tx.update(registrations).set({ checkedInAt: null }).where(and(eq(registrations.id, undo.id), isNotNull(registrations.checkedInAt))).returning();

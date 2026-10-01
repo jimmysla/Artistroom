@@ -57,6 +57,28 @@ export async function verifyPassword(password: string, storedValue: string): Pro
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
+/*
+ * Initial accounts (`AdminArtist`, `SuperUser`) were seeded by migrations whose password hashes
+ * are public in the repository. An account still using such a hash must set a new password
+ * before it can do anything else, and the seeded passwords can never be chosen again.
+ */
+const SEEDED_HASHES = [
+  "scrypt$16384$8$1$DFnEzzjoOTSMAR9gHwbmbw==$Rp0un3xvBHBJjGh5M4kjXbBXWi91k2eOPEnQV8d+SkU+04ZGIpz0ywiuOkotbhlaRGxSDzfczsAP6F6nLARpmA==",
+  "scrypt$16384$8$1$Oz3EpsJRhZvNq3tkk/3RGg==$rx2ww8TA1JNRLjMmFlzRrn8ICMn8tkVBE4RouUkCAqIO9zcbwCQ4CmyQuOtYD9/3lciId/dnDYyAZdtvkmvmTg==",
+];
+
+/** True if the account still uses one of the seeded (publicly known) password hashes. */
+export async function usesSeededPassword(user: AdminUser): Promise<boolean> {
+  const plain = (await open(user.passwordHash))?.plain;
+  return Boolean(plain && SEEDED_HASHES.includes(plain));
+}
+
+/** True if the password is one of the seeded ones (must not be set again). */
+export async function isSeededPassword(password: string): Promise<boolean> {
+  for (const hash of SEEDED_HASHES) if (await verifyPassword(password, hash)) return true;
+  return false;
+}
+
 // Used when no user matches so a failed login takes as long as a wrong password.
 let dummyHash: Promise<string> | undefined;
 
@@ -70,32 +92,45 @@ const findAdmin = async (username: string): Promise<AdminUser | undefined> => {
 };
 
 /**
- * Cookie signing key. Prefers SESSION_SECRET; otherwise falls back to the user's password hash,
- * which never leaves the server and automatically invalidates sessions when the password changes.
+ * Cookie signing key, bound to the user's stored password hash so a password change (or
+ * deactivation) ends all sessions of that account. With SESSION_SECRET set (recommended) the key
+ * is HMAC(SESSION_SECRET, hash): a leaked database alone is then not enough to forge sessions.
  */
 function signingKey(user: AdminUser): string {
   const secret = process.env.SESSION_SECRET;
   if (secret && secret.length < 32) throw new AuthConfigError("SESSION_SECRET muss mindestens 32 Zeichen lang sein.");
-  return secret || user.passwordHash;
+  return secret ? createHmac("sha256", secret).update(user.passwordHash).digest("base64url") : user.passwordHash;
 }
+
+export const sessionSecretSet = () => Boolean(process.env.SESSION_SECRET);
 
 const b64url = (s: string) => Buffer.from(s).toString("base64url");
 const sign = (payload: string, key: string) => createHmac("sha256", key).update(payload).digest("base64url");
 
-/** Returns the admin user for valid credentials, otherwise null. */
-export async function checkCredentials(username: string, password: string): Promise<AdminUser | null> {
+/**
+ * Checks a login. Returns the user, "inactive" for a deactivated account with the correct
+ * password (only then is the deactivation revealed), otherwise null.
+ */
+export async function verifyLogin(username: string, password: string): Promise<AdminUser | "inactive" | null> {
   const user = await findAdmin(username);
   if (!user) {
     await verifyPassword(password, await (dummyHash ??= hashPassword("dummy-password")));
     return null;
   }
-  if (!(await verifyPassword(password, user.passwordHash)) || !user.active) return null;
+  if (!(await verifyPassword(password, user.passwordHash))) return null;
+  if (!user.active) return "inactive";
   if (!(await open(user.passwordHash))?.current) {
     await resealHashes();
     // Re-read so the session cookie is signed with the new stored value.
     return (await findAdmin(user.username)) ?? null;
   }
   return user;
+}
+
+/** Returns the active admin user for valid credentials, otherwise null. */
+export async function checkCredentials(username: string, password: string): Promise<AdminUser | null> {
+  const result = await verifyLogin(username, password);
+  return result === "inactive" ? null : result;
 }
 
 export function createSessionCookie(user: AdminUser, secure: boolean): string {
@@ -127,10 +162,11 @@ function readCookie(req: Request, name: string): string | undefined {
   }
 }
 
-export const toIdentity = (user: AdminUser): AdminIdentity => ({
+export const toIdentity = async (user: AdminUser): Promise<AdminIdentity> => ({
   username: user.username,
   isSuper: user.isSuper,
   permissions: user.isSuper ? [] : user.permissions.filter(isPermission),
+  mustChangePassword: await usesSeededPassword(user),
 });
 
 /** Returns the admin identity (with current permissions from the DB) for a valid session, otherwise null. */
@@ -170,6 +206,7 @@ export async function requireAdmin(req: Request, ...needed: (Permission | "super
     return error("Interner Serverfehler.", 500);
   }
   if (!session) return error("Nicht autorisiert.", 401);
+  if (session.mustChangePassword) return error("Bitte lege zuerst ein neues Passwort fest.", 403, { mustChangePassword: true });
   const allowed = needed.length === 0 || needed.some((p) => (p === "super" ? session.isSuper : can(session, p)));
   return allowed ? session : error("Dafür fehlt dir die Berechtigung.", 403);
 }

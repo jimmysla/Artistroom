@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { formCategories, normalizeForm, type FormConfig } from "../../shared/site";
 import { DEFAULT_EVENT, type PublicEvent, eventDate } from "../../shared/event";
 import { api, EVENT_CHANNEL } from "./api";
 
@@ -44,3 +45,11 @@ export function EventMeta() {
   return <><time dateTime={event.date}>{eventDate(event)}</time> · {event.location}</>;
 }
 export function EventName() { return <>{useEvent()?.name ?? "\u00a0"}</>; }
+
+/** Form builder config (defaults until loaded / when not configured). */
+export function useForm(): FormConfig {
+  const form = useEvent()?.form;
+  return useMemo(() => normalizeForm(form), [form]);
+}
+/** All configured categories incl. hidden ones – for labels, filters and stats in the dashboard. */
+export const useCategories = () => formCategories(useForm());

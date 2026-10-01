@@ -20,6 +20,22 @@ const PROVIDER_TEXT = {
 
 type Section = "event" | "email" | "survey" | "reset";
 
+/*
+ * Parts that can be saved on their own: only their keys are taken from the form, everything else
+ * is sent as last saved – so unsaved edits in other parts are neither stored nor lost.
+ */
+type Part = "event" | "home" | "price" | "payment" | "mailbox" | "templates" | "survey";
+const PART_KEYS: Record<Part, (keyof Settings)[]> = {
+  event: ["name", "date", "time", "location"],
+  home: ["welcomeText", "welcomeImage"],
+  price: ["ticketPrice"],
+  payment: ["paymentProvider", "paymentUrl", "stripeSecretKey", "paypalClientId", "paypalClientSecret", "paypalMode"],
+  mailbox: ["senderName", "senderEmail", "smtpHost", "smtpPort", "smtpSecurity", "smtpUser", "smtpPassword"],
+  templates: [],
+  survey: [],
+};
+const PART_LABELS: Record<Part, string> = { event: "Veranstaltung", home: "Startseite", price: "Ticketpreis", payment: "Zahlung", mailbox: "Postfach & Absender", templates: "E-Mail-Vorlagen", survey: "Umfrage" };
+
 interface Props {
   isSuper: boolean;
   registrationCount: number;
@@ -37,6 +53,10 @@ export default function EventSettings({ isSuper, registrationCount, onReset }: P
   const [homeImages, setHomeImages] = useState<MailImage[]>([]);
   const [surveyDirty, setSurveyDirty] = useState(false);
   const [meta, setMeta] = useState<Omit<AdminSettings, "settings" | "mailTemplates"> | null>(null);
+  // Last state from the server – base for saving single parts.
+  const [saved, setSaved] = useState<AdminSettings | null>(null);
+  const [partBusy, setPartBusy] = useState<Part | null>(null);
+  const [partMessage, setPartMessage] = useState<{ part: Part; text: string } | null>(null);
   const [clear, setClear] = useState<Partial<Record<SecretKey, boolean>>>({});
   const clearPassword = Boolean(clear.smtpPassword);
   const [paymentTest, setPaymentTest] = useState<{ busy?: string; ok?: string; error?: string }>({});
@@ -49,7 +69,9 @@ export default function EventSettings({ isSuper, registrationCount, onReset }: P
   const [resetOpen, setResetOpen] = useState(false);
   const [resetDone, setResetDone] = useState("");
 
-  const apply = ({ settings, mailTemplates, ...rest }: AdminSettings) => {
+  const apply = (all: AdminSettings) => {
+    const { settings, mailTemplates, ...rest } = all;
+    setSaved(all);
     setSurvey(rest.survey);
     setProduct(rest.product);
     setSurveyDirty(false);
@@ -69,8 +91,53 @@ export default function EventSettings({ isSuper, registrationCount, onReset }: P
     </label>
   );
 
+  const partKeys = (part: Part) => PART_KEYS[part];
+  const isDirty = (part: Part) => {
+    if (!saved || !settings) return false;
+    if (part === "templates") return JSON.stringify(templates) !== JSON.stringify(saved.mailTemplates);
+    if (part === "survey") return JSON.stringify(survey) !== JSON.stringify(saved.survey);
+    return partKeys(part).some((k) => settings[k] !== saved.settings[k]) || partKeys(part).some((k) => clear[k as SecretKey]);
+  };
+
+  /** Saves one part only; the rest is sent as last saved, unsaved edits elsewhere stay in the form. */
+  const savePart = async (part: Part) => {
+    if (!saved || !settings || !templates || !survey) return;
+    setPartBusy(part); setError(""); setMessage(""); setPartMessage(null);
+    const keys = partKeys(part);
+    const body = { ...saved.settings, ...Object.fromEntries(keys.map((k) => [k, settings[k]])) } as Settings;
+    const partClear = Object.fromEntries(Object.entries(clear).filter(([k]) => (keys as string[]).includes(k))) as Partial<Record<SecretKey, boolean>>;
+    try {
+      const res = await api.saveSettings(body, part === "templates" ? templates : saved.mailTemplates, part === "survey" ? survey : saved.survey, product ?? saved.product, partClear);
+      // Take the server state for this part, keep everything else as currently edited.
+      const keep = { settings, templates, survey, clear };
+      setSaved(res);
+      setMeta((({ settings: _s, mailTemplates: _t, ...rest }) => rest)(res));
+      setSettings({ ...keep.settings, ...Object.fromEntries(keys.map((k) => [k, res.settings[k]])) } as Settings);
+      setTemplates(part === "templates" ? res.mailTemplates : keep.templates);
+      if (part === "survey") { setSurvey(res.survey); setSurveyDirty(false); }
+      setProduct(res.product);
+      setClear(Object.fromEntries(Object.entries(keep.clear).filter(([k]) => !(keys as string[]).includes(k))));
+      announceEventChange();
+      setPartMessage({ part, text: `✅ ${PART_LABELS[part]} gespeichert.` });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setPartBusy(null);
+    }
+  };
+
+  const partBar = (part: Part) => (
+    <div className="settings-save settings-save-part">
+      <Button type="button" variant={isDirty(part) ? "primary" : "secondary"} size="sm" loading={partBusy === part} disabled={partBusy !== null && partBusy !== part} onClick={() => savePart(part)}>
+        {PART_LABELS[part]} speichern
+      </Button>
+      {isDirty(part) && partMessage?.part !== part && <span className="muted small">• ungespeicherte Änderungen</span>}
+      {partMessage?.part === part && <p role="status">{partMessage.text}</p>}
+    </div>
+  );
+
   const save = async (e: React.FormEvent) => {
-    e.preventDefault(); setBusy(true); setError(""); setMessage("");
+    e.preventDefault(); setBusy(true); setError(""); setMessage(""); setPartMessage(null);
     try {
       apply(await api.saveSettings(settings!, templates!, survey!, product!, clear));
       announceEventChange();
@@ -117,7 +184,7 @@ export default function EventSettings({ isSuper, registrationCount, onReset }: P
     ...(isSuper ? [{ id: "reset" as const, label: "♻️ Reset für nächstes Event" }] : []),
   ];
 
-  const saveBar = <div className="settings-save"><Button type="submit" loading={busy}>Einstellungen speichern</Button>{message && <p role="status">{message}</p>}</div>;
+  const saveBar = <div className="settings-save"><Button type="submit" loading={busy} disabled={partBusy !== null}>Alle Änderungen speichern</Button>{message && <p role="status">{message}</p>}</div>;
 
   return <section className="settings-panel"><h1>Einstellungen</h1><p className="muted">Veranstaltung, E-Mails und Vorbereitung fürs nächste Event zentral verwalten.</p>
     <nav className="settings-tabs" aria-label="Einstellungsbereiche">
@@ -146,7 +213,7 @@ export default function EventSettings({ isSuper, registrationCount, onReset }: P
       </div>
     ) : !settings || !meta || !templates ? (!error && <p role="status">Einstellungen werden geladen…</p>) : <form onSubmit={save}>
       {section === "event" && <>
-        <Fold title="Veranstaltung"><div className="settings-fields">{field("name", "Veranstaltungsname", "text", true, { wide: true })}{field("date", "Datum", "date", true)}{field("time", "Uhrzeit (Europe/Berlin)", "time")}<LocationField value={settings.location} onChange={(v) => set("location", v)} /></div></Fold>
+        <Fold title="Veranstaltung"><div className="settings-fields">{field("name", "Veranstaltungsname", "text", true, { wide: true })}{field("date", "Datum", "date", true)}{field("time", "Uhrzeit (Europe/Berlin)", "time")}<LocationField value={settings.location} onChange={(v) => set("location", v)} /></div>{partBar("event")}</Fold>
 
         <Fold title="Startseite">
         <p className="muted small">Bild und Text stehen auf der Startseite unter dem Scroll-Hinweis, direkt über dem Button „Zur Anmeldung“. Das Bild steht links und passt sich der Bildschirmgröße an.</p>
@@ -166,6 +233,7 @@ export default function EventSettings({ isSuper, registrationCount, onReset }: P
             <span className="field-hint">Leer lassen = Standardtext. Erste Zeile = Überschrift, jede weitere Zeile ein Absatz. <code>{"{ticketpreis}"}</code> wird durch den Ticketpreis ersetzt (z. B. „22 € zzgl. Steuern“).</span>
           </label>
         </div>
+        {partBar("home")}
         </Fold>
 
         <Fold title="Ticketpreis">
@@ -173,9 +241,9 @@ export default function EventSettings({ isSuper, registrationCount, onReset }: P
           {field("ticketPrice", "Ticketpreis in € (netto, zzgl. Steuern)", "text", false, {
             placeholder: "z. B. 15",
             inputMode: "decimal",
-            hint: <>💡 Hinweis: Nur die Zahl eintragen (z. B. <strong>15</strong> oder <strong>12,50</strong>), ohne €-Zeichen. Der Betrag wird unter „Anmeldungen verwalten“ beim Anfordern einer Zahlung automatisch vorausgefüllt.</>,
+            hint: <>💡 Hinweis: Nur die Zahl eintragen (z. B. <strong>15</strong> oder <strong>12,50</strong>), ohne €-Zeichen. Genau dieser Betrag wird bei „Zahlung anfordern“ automatisch verwendet – ohne Preisfeld. Ohne Ticketpreis kann keine Zahlung angefordert werden.</>,
           })}
-        </div></Fold>
+        </div>{partBar("price")}</Fold>
 
         <Fold title="Zahlung">
         <div className="settings-fields">
@@ -214,13 +282,14 @@ export default function EventSettings({ isSuper, registrationCount, onReset }: P
           <div className="settings-field payment-test"><Button type="button" variant="secondary" size="sm" loading={paymentTest.busy === "paypal"} disabled={!paypalReady} onClick={() => testPayment("paypal")}>Verbindung testen</Button></div>
         </div>
         {paymentTest.ok && <Alert tone="success">{paymentTest.ok}</Alert>}
-        {paymentTest.error && <Alert>{paymentTest.error}</Alert>}</Fold>
+        {paymentTest.error && <Alert>{paymentTest.error}</Alert>}
+        {partBar("payment")}</Fold>
         {saveBar}
       </>}
 
       {section === "survey" && survey && <>
         <Fold title="📊 Umfrage nach dem Event">
-        <SurveyEditor value={survey} onChange={(v) => { setSurvey(v); setSurveyDirty(true); setMessage(""); }} sentAt={meta.surveySentAt} dirty={surveyDirty} /></Fold>
+        <SurveyEditor value={survey} onChange={(v) => { setSurvey(v); setSurveyDirty(true); setMessage(""); }} sentAt={meta.surveySentAt} dirty={surveyDirty} />{partBar("survey")}</Fold>
         {saveBar}
       </>}
 
@@ -257,11 +326,11 @@ export default function EventSettings({ isSuper, registrationCount, onReset }: P
               value={settings.smtpPassword} onChange={e => set("smtpPassword", e.target.value)} />
             {meta.secretsSet.smtpPassword && <span className="checkbox-inline"><input type="checkbox" checked={clearPassword} onChange={e => { setClear({ ...clear, smtpPassword: e.target.checked }); set("smtpPassword", ""); }} /> Gespeichertes Passwort entfernen</span>}
           </label>
-        </div></Fold>
+        </div>{partBar("mailbox")}</Fold>
 
         <Fold title="E-Mail-Vorlagen">
         <p className="muted">Betreff und Text für jede Status-E-Mail vorkonfigurieren. Im Baukasten legst du fest, wo der QR-Code steht, welches Design im Hintergrund liegt und wie formatiert wird.</p>
-        <MailTemplateEditor value={templates} onChange={(t) => { setTemplates(t); setMessage(""); }} eventName={settings.name} paymentUrl={settings.paymentUrl} active={activeTemplate} onActiveChange={setActiveTemplate} /></Fold>
+        <MailTemplateEditor value={templates} onChange={(t) => { setTemplates(t); setMessage(""); }} eventName={settings.name} paymentUrl={settings.paymentUrl} active={activeTemplate} onActiveChange={setActiveTemplate} />{partBar("templates")}</Fold>
         {saveBar}
 
         <Fold title="Test-E-Mail">

@@ -5,6 +5,7 @@ import RegisterPage from "./pages/RegisterPage";
 import AdminPage from "./pages/AdminPage";
 import PaymentPage from "./pages/PaymentPage";
 import SurveyPage from "./pages/SurveyPage";
+import LegalPage from "./pages/LegalPage";
 import "./styles.css";
 import { EventProvider } from "./lib/event";
 
@@ -15,6 +16,8 @@ createRoot(document.getElementById("root")!).render(
         <Route path="/" element={<RegisterPage />} />
         <Route path="/zahlung" element={<PaymentPage />} />
         <Route path="/umfrage" element={<SurveyPage />} />
+        <Route path="/impressum" element={<LegalPage page="impressum" />} />
+        <Route path="/datenschutz" element={<LegalPage page="datenschutz" />} />
         <Route path="/login" element={<AdminPage />} />
         <Route path="/dashboard" element={<AdminPage />} />
         {/* Old URL */}

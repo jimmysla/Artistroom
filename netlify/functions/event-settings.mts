@@ -6,7 +6,8 @@ import { parseEuroToCents, validateEmail } from "../../shared/registration.js";
 import { requireAdmin } from "../lib/auth.js";
 import { logAction } from "../lib/audit.js";
 import { TransportError, readSealed, seal } from "../lib/crypto.js";
-import { getEvent } from "../lib/event.js";
+import { formOf, getEvent } from "../lib/event.js";
+import { normalizeLegal } from "../../shared/site.js";
 import { describeProductChanges, describeSurveyChanges, describeTemplateChanges } from "../lib/diff.js";
 import { createTestCheckout } from "../lib/test-checkout.js";
 import { PAYMENT_PROVIDERS, PaymentError, isPaymentProvider, paymentCredentials, providerConfigured, testProvider } from "../lib/payments.js";
@@ -100,7 +101,9 @@ export default async (req: Request) => {
     }
     if (req.method === "GET") {
       const s = await getEvent();
-      return json(admin ? await forAdmin(s) : { settings: { name: s.name, date: s.date, time: s.time, location: s.location, ticketPrice: s.ticketPrice, welcomeText: s.welcomeText, welcomeImage: s.welcomeImage } });
+      if (admin) return json(await forAdmin(s));
+      const legal = normalizeLegal("legal" in s ? s.legal : null);
+      return json({ settings: { name: s.name, date: s.date, time: s.time, location: s.location, ticketPrice: s.ticketPrice, welcomeText: s.welcomeText, welcomeImage: s.welcomeImage, form: formOf(s), legalPages: { impressum: Boolean(legal.impressum), datenschutz: Boolean(legal.datenschutz) } } });
     }
     if (!session || req.method !== "PUT") return error("Methode nicht erlaubt.", 405);
     // Whole body (incl. SMTP password) arrives encrypted from the browser.
@@ -117,26 +120,31 @@ export default async (req: Request) => {
       const value = str(body[key]);
       s[key] = body[`${key}Clear`] === true ? "" : value ? await seal(value) : before[key];
     }
-    if (!["live", "sandbox"].includes(s.paypalMode)) return error("Ungültiger PayPal-Modus.", 422);
-
-    if (!s.name || !s.location || !/^\d{4}-\d{2}-\d{2}$/.test(s.date) || Number.isNaN(Date.parse(s.date)) || new Date(s.date).toISOString().slice(0,10) !== s.date || (s.time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(s.time))) return error("Bitte Name, gültiges Datum, Uhrzeit und Ort prüfen.", 422);
-    if ((s.senderEmail && validateEmail(s.senderEmail)) || /[\r\n<>]/.test(s.senderName) || !s.senderName) return error("Bitte gültigen Absender eintragen.", 422);
-    if (s.welcomeImage && !/^[0-9a-f-]{36}$/.test(s.welcomeImage)) return error("Ungültiges Startseiten-Bild.", 422);
+    // Each area is only validated when one of its fields changed, so e.g. the mailbox can be saved
+    // although Stripe/PayPal (or any other area) isn't set up yet.
+    const changed = (...keys: (keyof typeof s)[]) => keys.some((k) => s[k] !== before[k]);
     if (s.paymentProvider === "link") s.paymentProvider = "online"; // retired mode: checkout is the standard
-    if (!["online", ...PAYMENT_PROVIDERS].includes(s.paymentProvider)) return error("Ungültige Zahlungsart.", 422);
+    if (changed("paypalMode") && !["live", "sandbox"].includes(s.paypalMode)) return error("Ungültiger PayPal-Modus.", 422);
+
+    if (changed("name", "date", "time", "location") && (!s.name || !s.location || !/^\d{4}-\d{2}-\d{2}$/.test(s.date) || Number.isNaN(Date.parse(s.date)) || new Date(s.date).toISOString().slice(0,10) !== s.date || (s.time && !/^([01]\d|2[0-3]):[0-5]\d$/.test(s.time)))) return error("Bitte Name, gültiges Datum, Uhrzeit und Ort prüfen.", 422);
+    if (changed("senderName", "senderEmail") && ((s.senderEmail && validateEmail(s.senderEmail)) || /[\r\n<>]/.test(s.senderName) || !s.senderName)) return error("Bitte gültigen Absender eintragen.", 422);
+    if (changed("welcomeImage") && s.welcomeImage && !/^[0-9a-f-]{36}$/.test(s.welcomeImage)) return error("Ungültiges Startseiten-Bild.", 422);
+    if (changed("paymentProvider") && !["online", ...PAYMENT_PROVIDERS].includes(s.paymentProvider)) return error("Ungültige Zahlungsart.", 422);
+    // "online" = whatever provider is configured (none yet is fine – credentials can be added later).
+    // Only an explicitly chosen single provider must be set up, and only when that choice changes.
     const creds = await paymentCredentials(s);
-    if (s.paymentProvider === "online" && !PAYMENT_PROVIDERS.some((p) => providerConfigured(p, creds))) return error("Für „Stripe + PayPal“ bitte mindestens einen Anbieter einrichten.", 422);
-    if (isPaymentProvider(s.paymentProvider) && !providerConfigured(s.paymentProvider, creds)) return error(`${s.paymentProvider === "stripe" ? "Stripe" : "PayPal"} ist noch nicht eingerichtet – bitte zuerst die Zugangsdaten unten eintragen.`, 422);
-    if (s.paymentUrl && !validPaymentUrl(s.paymentUrl)) return error("Der Zahlungslink muss eine gültige HTTPS-Adresse sein.", 422);
-    if (s.ticketPrice) {
+    if (changed("paymentProvider") && isPaymentProvider(s.paymentProvider) && !providerConfigured(s.paymentProvider, creds)) return error(`${s.paymentProvider === "stripe" ? "Stripe" : "PayPal"} ist noch nicht eingerichtet – bitte zuerst die Zugangsdaten unten eintragen.`, 422);
+    if (changed("paymentUrl") && s.paymentUrl && !validPaymentUrl(s.paymentUrl)) return error("Der Zahlungslink muss eine gültige HTTPS-Adresse sein.", 422);
+    if (changed("ticketPrice") && s.ticketPrice) {
       const cents = parseEuroToCents(s.ticketPrice);
       if (cents == null) return error("Ticketpreis: bitte nur eine Zahl eingeben, z. B. 15 oder 12,50.", 422);
       s.ticketPrice = (cents / 100).toFixed(cents % 100 ? 2 : 0).replace(".", ",");
     }
-    if (s.smtpHost && !/^[a-zA-Z0-9.-]{3,253}$/.test(s.smtpHost)) return error("Bitte einen gültigen SMTP-Server eintragen, z. B. smtp.example.de.", 422);
-    if (!/^\d{1,5}$/.test(s.smtpPort) || +s.smtpPort < 1 || +s.smtpPort > 65535) return error("Bitte einen gültigen SMTP-Port eintragen (meist 587 oder 465).", 422);
-    if (!SECURITY.includes(s.smtpSecurity)) return error("Ungültige SMTP-Verschlüsselung.", 422);
-    if (/[\r\n]/.test(s.smtpUser)) return error("Ungültiger SMTP-Benutzer.", 422);
+    const smtpChanged = changed("smtpHost", "smtpPort", "smtpSecurity", "smtpUser");
+    if (smtpChanged && s.smtpHost && !/^[a-zA-Z0-9.-]{3,253}$/.test(s.smtpHost)) return error("Bitte einen gültigen SMTP-Server eintragen, z. B. smtp.example.de.", 422);
+    if (smtpChanged && (!/^\d{1,5}$/.test(s.smtpPort) || +s.smtpPort < 1 || +s.smtpPort > 65535)) return error("Bitte einen gültigen SMTP-Port eintragen (meist 587 oder 465).", 422);
+    if (smtpChanged && !SECURITY.includes(s.smtpSecurity)) return error("Ungültige SMTP-Verschlüsselung.", 422);
+    if (smtpChanged && /[\r\n]/.test(s.smtpUser)) return error("Ungültiger SMTP-Benutzer.", 422);
 
     // Mail templates (Baukasten): validated and completed with defaults; omitted = keep.
     const beforeTemplates = "mailTemplates" in before ? (before.mailTemplates ?? null) : null;

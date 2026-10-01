@@ -2,10 +2,11 @@ import type { Config } from "@netlify/functions";
 import { eq, or, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { registrations, type Registration } from "../../db/schema.js";
-import { getEvent } from "../lib/event.js";
+import { categoriesOf, formOf, getEvent } from "../lib/event.js";
+import { enabledCategories, fieldEnabled, validateCustomAnswers } from "../../shared/site.js";
 import { MailError, buildStatusMail, mailProvider, sendMail } from "../lib/mail.js";
 import { normalizeMailTemplates } from "../../shared/mail-template.js";
-import { categoryLabel, formatRegistrationNumber, normalizeInstagram, normalizeTiktok, validateRegistration } from "../../shared/registration.js";
+import { categoryLabel, formatRegistrationNumber, normalizeInstagram, normalizeTiktok, validateDetails } from "../../shared/registration.js";
 import { error, json, str, logError, crossSiteError, isCrossSite } from "../lib/http.js";
 import { TransportError, blindIndex, readSealed } from "../lib/crypto.js";
 import { openRegistration, sealRegistration } from "../lib/pii.js";
@@ -43,19 +44,34 @@ export default async (req: Request) => {
   // Honeypot: real users never fill this hidden field. Pretend success so bots don't retry.
   if (str(body.website)) return json({ ok: true }, 201);
 
+  let settings: Awaited<ReturnType<typeof getEvent>>;
+  try {
+    settings = await getEvent();
+  } catch (err) {
+    logError("Event settings unavailable", err);
+    return error("Deine Anmeldung konnte gerade nicht gespeichert werden. Bitte versuche es gleich noch einmal.", 500);
+  }
+  const form = formOf(settings);
+  // Optional fields hidden in the form builder are ignored.
+  const optional = (field: "instagram" | "tiktok" | "referredBy", value: string) => (fieldEnabled(form, field) ? value : "");
+
   const input = {
     category: str(body.category),
     firstName: str(body.firstName).trim(),
     lastName: str(body.lastName).trim(),
     stageName: str(body.stageName).trim(),
     email: str(body.email).trim().toLowerCase(),
-    instagram: str(body.instagram),
-    tiktok: str(body.tiktok),
-    referredBy: str(body.referredBy).trim(),
+    instagram: optional("instagram", str(body.instagram)),
+    tiktok: optional("tiktok", str(body.tiktok)),
+    referredBy: optional("referredBy", str(body.referredBy).trim()),
     city: str(body.city).trim(),
   };
 
-  const fieldErrors = validateRegistration(input);
+  const fieldErrors: Record<string, string> = { ...validateDetails(input) };
+  if (!enabledCategories(form).some((c) => c.id === input.category)) fieldErrors.category = "Bitte wähle eine Kategorie.";
+  const extraAnswers = body.extra && typeof body.extra === "object" ? (body.extra as Record<string, unknown>) : {};
+  const custom = validateCustomAnswers(form, extraAnswers);
+  Object.assign(fieldErrors, custom.errors);
   if (body.mediaConsent !== true) {
     fieldErrors.mediaConsent = "Bitte bestätige die Einwilligung zu Foto- und Videoaufnahmen.";
   }
@@ -89,6 +105,7 @@ export default async (req: Request) => {
           tiktok: normalizeTiktok(input.tiktok) || null,
           referredBy: input.referredBy || null,
           city: input.city,
+          extra: custom.values.length ? JSON.stringify(custom.values) : null,
         })),
         category: input.category,
         mediaConsentAt: new Date(),
@@ -100,7 +117,7 @@ export default async (req: Request) => {
       username: null,
       action: "anmeldung_eingegangen",
       target: `${formatRegistrationNumber(created.id)} · ${input.stageName}`,
-      details: `${categoryLabel(input.category)} · ${input.firstName} ${input.lastName} · ${input.city}${input.referredBy ? ` · empfohlen von ${input.referredBy}` : ""}`,
+      details: `${categoryLabel(input.category, categoriesOf(settings))} · ${input.firstName} ${input.lastName} · ${input.city}${input.referredBy ? ` · empfohlen von ${input.referredBy}` : ""}`,
       registrationId: created.id,
     });
     await sendConfirmation(created);

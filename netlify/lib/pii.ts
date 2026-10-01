@@ -9,7 +9,7 @@ import { ENC_PREFIX, blindIndex, isSealed, open, seal } from "./crypto.js";
  * introduced are plain text; `open` passes them through and `encryptLegacyRegistrations`
  * converts them. Always run rows through `openRegistration` before returning, mailing or logging.
  */
-export const PII_FIELDS = ["name", "firstName", "lastName", "email", "instagram", "tiktok", "referredBy", "city"] as const;
+export const PII_FIELDS = ["name", "firstName", "lastName", "email", "instagram", "tiktok", "referredBy", "city", "extra"] as const;
 type PiiField = (typeof PII_FIELDS)[number];
 
 /** Encrypts the personal fields of an insert/update object and adds the e-mail fingerprint. */

@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { BrowserQRCodeReader, type IScannerControls } from "@zxing/browser";
 import { api, formatDateTime, type Registration } from "../../lib/api";
-import { CATEGORIES, categoryLabel, formatRegistrationNumber, hasTicket } from "../../../shared/registration";
+import { categoryLabel, formatRegistrationNumber, hasTicket } from "../../../shared/registration";
 import Button from "../Button";
+import { useCategories } from "../../lib/event";
+import ScanOverlay from "./ScanOverlay";
+import { DEFAULT_CHECKIN, type CheckinDesign, type ScanState } from "../../../shared/site";
 export default function Checkin({ rows, refresh }: { rows: Registration[]; refresh: () => Promise<void> }) {
+  const categories = useCategories();
   const video = useRef<HTMLVideoElement>(null);
   const scanner = useRef<HTMLDivElement>(null);
   const controls = useRef<IScannerControls | null>(null);
@@ -16,10 +20,15 @@ export default function Checkin({ rows, refresh }: { rows: Registration[]; refre
   const [success, setSuccess] = useState(false);
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
+  // Fullscreen scan screen (design from Dashboard → Gestaltung); `replay` restarts its intro animation.
+  const [design, setDesign] = useState<CheckinDesign>(DEFAULT_CHECKIN);
+  const [overlay, setOverlay] = useState<{ open: boolean; replay: number }>({ open: false, replay: 0 });
+  useEffect(() => { api.siteConfig().then(c => setDesign(c.checkin)).catch(() => { /* defaults */ }); }, []);
   const stop = () => { session.current++; controls.current?.stop(); controls.current = null; setCamera(false); };
   useEffect(() => { const hide = () => { if (document.hidden) stop(); }; document.addEventListener("visibilitychange", hide); return () => { session.current++; controls.current?.stop(); document.removeEventListener("visibilitychange", hide); }; }, []);
   async function inspect(value: string) {
     stop(); setTicket(value); setBusy(true); setError(""); setResult(null); setSuccess(false);
+    setOverlay(o => ({ open: true, replay: o.replay + 1 }));
     try { setResult(await api.checkin(value)); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }
   async function start() {
@@ -46,14 +55,31 @@ export default function Checkin({ rows, refresh }: { rows: Registration[]; refre
   const expected = tickets.length;
   const pct = expected ? Math.round((checked.length / expected) * 100) : 0;
   const visible = (filter === "checked" ? checked : filter === "pending" ? pending : tickets)
-    .filter(r => `${r.name} ${r.firstName ?? ""} ${r.lastName ?? ""} ${categoryLabel(r.category)} ${formatRegistrationNumber(r.id)}`.toLowerCase().includes(search.toLowerCase()))
+    .filter(r => `${r.name} ${r.firstName ?? ""} ${r.lastName ?? ""} ${categoryLabel(r.category, categories)} ${formatRegistrationNumber(r.id)}`.toLowerCase().includes(search.toLowerCase()))
     // Not yet admitted first (alphabetical), then admitted (latest first), then not approved.
     .sort((a, b) => rank(a) - rank(b) || (b.checkedInAt ?? "").localeCompare(a.checkedInAt ?? "") || a.name.localeCompare(b.name));
   const r = result?.registration;
   const banner = !r ? null : r.checkedInAt ? (success ? "ok" : "already") : "ready";
   const realName = (x: Registration) => [x.firstName, x.lastName].filter(Boolean).join(" ");
+  const scanState: ScanState | null = error ? "invalid" : banner;
+  const closeOverlay = () => setOverlay(o => ({ ...o, open: false }));
+  const scanInfo = error ? { name: "", number: "", category: "", realName: "", city: "", instagram: "", note: error } : r ? {
+    name: r.name,
+    number: formatRegistrationNumber(r.id),
+    category: categoryLabel(r.category, categories),
+    realName: realName(r),
+    city: r.city ?? "",
+    instagram: r.instagram ?? "",
+    categoryColor: categories.find(c => c.id === r.category)?.color ?? "",
+    note: r.checkedInAt ? `${banner === "ok" ? "Eingelassen um" : "Wurde bereits eingelassen um"} ${formatDateTime(r.checkedInAt)} Uhr${banner === "already" ? " – nicht erneut einlassen!" : ""}` : "Noch nicht eingecheckt",
+  } : null;
 
-  return <section className="checkin-panel"><h1>Check-in</h1><p className="muted">QR-Ticket scannen, Namen prüfen und Einlass bestätigen.</p>
+  return <section className="checkin-panel">
+    {overlay.open && <ScanOverlay design={design} state={busy && !r ? null : scanState} info={scanInfo} replay={overlay.replay} onClose={closeOverlay}
+      actions={scanState === "ready"
+        ? <><Button loading={busy} onClick={() => admit(ticket)}>✅ Einlass bestätigen</Button><Button variant="secondary" onClick={closeOverlay}>Abbrechen</Button></>
+        : <><Button onClick={() => { closeOverlay(); void start(); }}>📷 Nächstes Ticket scannen</Button><Button variant="secondary" onClick={closeOverlay}>Schließen</Button></>} />}
+    <h1>Check-in</h1><p className="muted">QR-Ticket scannen, Namen prüfen und Einlass bestätigen.</p>
     <div className="checkin-stats" role="group" aria-label="Einlass-Status">
       <button type="button" className={`checkin-stat is-in ${filter === "checked" ? "is-active" : ""}`} onClick={() => setFilter(filter === "checked" ? "all" : "checked")}><span>✅ Eingelassen</span><strong>{checked.length}</strong></button>
       <button type="button" className={`checkin-stat is-pending ${filter === "pending" ? "is-active" : ""}`} onClick={() => setFilter(filter === "pending" ? "all" : "pending")}><span>⏳ Noch nicht da</span><strong>{pending.length}</strong></button>
@@ -68,7 +94,7 @@ export default function Checkin({ rows, refresh }: { rows: Registration[]; refre
       {busy && <p role="status">Ticket wird geprüft…</p>}
       {r && <div className={`scan-banner is-${banner}`} role="status">
         <strong>{banner === "ok" ? "✅ EINLASS OK" : banner === "already" ? "⚠️ BEREITS EINGECHECKT" : "🎟️ TICKET GÜLTIG"}</strong>
-        <span className="scan-meta">{formatRegistrationNumber(r.id)} · {categoryLabel(r.category)}</span>
+        <span className="scan-meta">{formatRegistrationNumber(r.id)} · {categoryLabel(r.category, categories)}</span>
         <h2>{r.name}</h2>
         {(realName(r) || r.city) && <p>{realName(r)}{r.city && ` · ${r.city}`}</p>}
         {r.instagram && <p>@{r.instagram}</p>}
@@ -80,13 +106,13 @@ export default function Checkin({ rows, refresh }: { rows: Registration[]; refre
 
     <h2>Einlassübersicht</h2><p className="muted">Automatische Aktualisierung alle 5 Sekunden · Zeiten in Europe/Berlin</p>
     <nav className="checkin-filter" aria-label="Check-in filtern">{([["all", "Alle Tickets", tickets.length], ["pending", "⏳ Noch nicht da", pending.length], ["checked", "✅ Eingelassen", checked.length]] as const).map(([id, label, count]) => <button key={id} aria-pressed={filter === id} onClick={() => setFilter(id)}>{label} <strong>{count}</strong></button>)}</nav>
-    <div className="category-summary">{CATEGORIES.map(c => <span key={c.id}>{c.icon} {c.label}: {checked.filter(r => r.category === c.id).length} / {checked.filter(r => r.category === c.id).length + pending.filter(r => r.category === c.id).length}</span>)}</div>
+    <div className="category-summary">{categories.filter(c => c.enabled || tickets.some(r => r.category === c.id)).map(c => <span key={c.id}>{c.icon} {c.label}: {checked.filter(r => r.category === c.id).length} / {checked.filter(r => r.category === c.id).length + pending.filter(r => r.category === c.id).length}</span>)}</div>
     <input className="input" type="search" aria-label="Check-in-Liste durchsuchen" placeholder="Name, Nummer oder Kategorie suchen…" value={search} onChange={e => setSearch(e.target.value)} />
     <ul className="checkin-list">{visible.map(x => {
       const state = x.checkedInAt ? "in" : "pending";
       return <li key={x.id} className={`checkin-row is-${state}`}>
         <span className="checkin-icon" aria-hidden="true">{state === "in" ? "✅" : "⏳"}</span>
-        <div><strong>{x.name}</strong><span>{formatRegistrationNumber(x.id)} · {categoryLabel(x.category)}{realName(x) && ` · ${realName(x)}`}</span></div>
+        <div><strong>{x.name}</strong><span>{formatRegistrationNumber(x.id)} · {categoryLabel(x.category, categories)}{realName(x) && ` · ${realName(x)}`}</span></div>
         <div className="checkin-state">
           {state === "in" ? <span className="checkin-pill is-in">Eingelassen · {formatDateTime(x.checkedInAt!)} Uhr</span>
  : <><span className="checkin-pill is-pending">Noch nicht da</span>{x.ticketToken && <button type="button" className="action-btn action-free" disabled={busy} onClick={() => { void inspect(`artistroom:${x.ticketToken}`); scanner.current?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>Einlass prüfen</button>}</>}

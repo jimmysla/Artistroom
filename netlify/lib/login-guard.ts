@@ -18,7 +18,8 @@ interface Attempts {
 }
 
 const store = () => getStore("login-attempts");
-const key = (username: string) => blindIndex(`login:${username}`);
+// v2: lockouts recorded while the SuperUser seed hash was broken no longer apply.
+const key = (username: string) => blindIndex(`login:v2:${username}`);
 
 export async function lockedUntil(username: string): Promise<number | null> {
   try {

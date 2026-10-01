@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import ConfirmDialog from "./ConfirmDialog";
 import { statusLabel } from "../../../shared/registration";
 import Spinner from "../Spinner";
@@ -18,15 +18,8 @@ export default function StatusActions({ registration: r, onChange }: Props) {
   const [confirmation, setConfirmation] = useState<{ status: Action; amountCents?: number } | null>(null);
   const [sendError, setSendError] = useState("");
   const [busy, setBusy] = useState<Action | null>(null);
-  const [requesting, setRequesting] = useState(false);
-  const [amount, setAmount] = useState(r.amountCents ? String(r.amountCents / 100).replace(".", ",") : "");
-  const [amountError, setAmountError] = useState<string | null>(null);
-  const ticketPrice = useEvent()?.ticketPrice ?? "";
-  // Prefill with the ticket price from the settings unless an amount was already requested.
-  const startRequest = () => {
-    if (!amount && ticketPrice) setAmount(ticketPrice);
-    setRequesting(true);
-  };
+  // The amount is always the ticket price from the settings (the server uses it too) – no price field.
+  const ticketCents = parseEuroToCents(useEvent()?.ticketPrice ?? "");
 
   const run = (status: Action, amountCents?: number) => { setSendError(""); setConfirmation({ status, amountCents }); };
   const confirm = async () => {
@@ -34,7 +27,7 @@ export default function StatusActions({ registration: r, onChange }: Props) {
     setBusy(confirmation.status); setSendError("");
     try {
       await onChange(confirmation.status, confirmation.amountCents);
-      setConfirmation(null); setRequesting(false);
+      setConfirmation(null);
     } catch (e) { setSendError((e as Error).message); } finally { setBusy(null); }
   };
   if (confirmation) return <ConfirmDialog title="Status ändern und E-Mail senden?" confirmLabel="Bestätigen und senden" loading={busy !== null} onCancel={() => setConfirmation(null)} onConfirm={confirm}>
@@ -56,54 +49,13 @@ export default function StatusActions({ registration: r, onChange }: Props) {
     );
   if (r.status === "abgelehnt") return <p className="status-locked">❌ Abgelehnt · Status gesperrt, nur noch Details</p>;
 
-  const submitAmount = (e: FormEvent) => {
-    e.preventDefault();
-    const cents = parseEuroToCents(amount);
-    if (cents == null) return setAmountError("Bitte einen gültigen Betrag eingeben, z. B. 25 oder 12,50.");
-    run("zahlung_angefordert", cents);
-  };
-
-  if (requesting) {
-    return (
-      <form className="status-actions status-actions-amount" onSubmit={submitAmount} noValidate>
-        <label className={`amount-field ${amountError ? "has-error" : ""}`}>
-          <span className="sr-only">Betrag in Euro</span>
-          <input
-            className="input input-sm"
-            inputMode="decimal"
-            placeholder={ticketPrice || "Betrag"}
-            autoFocus
-            value={amount}
-            aria-invalid={Boolean(amountError) || undefined}
-            onChange={(e) => {
-              setAmount(e.target.value);
-              setAmountError(null);
-            }}
-            onKeyDown={(e) => e.key === "Escape" && setRequesting(false)}
-          />
-          <span className="amount-suffix" aria-hidden="true">€ netto</span>
-        </label>
-        <button type="submit" className="action-btn action-request" disabled={busy !== null}>
-          {busy ? <Spinner /> : null} Anfordern
-        </button>
-        <button type="button" className="action-btn action-plain" onClick={() => setRequesting(false)} disabled={busy !== null}>
-          Abbrechen
-        </button>
-        {amountError && (
-          <p className="field-error amount-error" role="alert">
-            {amountError}
-          </p>
-        )}
-      </form>
-    );
-  }
-
-  const button = (status: Action, label: string, className: string, onClick: () => unknown = () => run(status)) => (
+  const button = (status: Action, label: string, className: string, onClick: () => unknown = () => run(status), disabled = false, title?: string) => (
     <button
       type="button"
       className={`action-btn ${className} ${r.status === status ? "is-current" : ""}`}
       aria-pressed={r.status === status}
-      disabled={busy !== null}
+      disabled={busy !== null || disabled}
+      title={title}
       onClick={onClick}
     >
       {busy === status && <Spinner />}
@@ -116,10 +68,13 @@ export default function StatusActions({ registration: r, onChange }: Props) {
       {button("kostenlos", "🎁 Kostenlos", "action-free")}
       {button(
         "zahlung_angefordert",
-        r.status === "zahlung_angefordert" && r.amountCents ? `💳 ${formatNet(r.amountCents)} ändern` : "💳 Zahlung anfordern",
+        ticketCents ? `💳 Zahlung anfordern · ${formatNet(ticketCents)}` : "💳 Zahlung anfordern",
         "action-request",
-        startRequest,
+        () => ticketCents && run("zahlung_angefordert", ticketCents),
+        !ticketCents,
+        ticketCents ? undefined : "Zuerst unter Einstellungen → Ticketpreis einen Preis hinterlegen",
       )}
+      {!ticketCents && <span className="muted small">Kein Ticketpreis hinterlegt – unter Einstellungen → Ticketpreis eintragen.</span>}
       {button("abgelehnt", "❌ Ablehnen", "action-reject")}
       {r.status !== "ausstehend" && button("ausstehend", "↩️ Zurücksetzen", "action-plain")}
     </div>

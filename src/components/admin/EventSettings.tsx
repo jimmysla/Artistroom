@@ -168,6 +168,28 @@ export default function EventSettings({ isSuper, registrationCount, onReset }: P
         </div>
         </Fold>
 
+        <Fold title="Impressum & Datenschutz">
+        <p className="muted small">Steuert die Links „Impressum“ und „Datenschutz“ ganz unten auf der Webseite. Ein Klick öffnet den Text in einem Fenster.</p>
+        <div className="settings-fields">
+          <label className="settings-field is-wide legal-switch">
+            <span className="checkbox-inline">
+              <input type="checkbox" role="switch" checked={settings.showLegal === "an"} onChange={e => set("showLegal", e.target.checked ? "an" : "aus")} />
+              Impressum &amp; Datenschutz unten anzeigen
+            </span>
+            <span className="field-hint">{settings.showLegal === "an" ? "✅ Wird im Footer angezeigt." : "Ausgeblendet – im Footer nicht sichtbar."} Nach dem Speichern sofort aktiv.</span>
+          </label>
+          <label className="settings-field is-wide">
+            Impressum
+            <textarea className="input" rows={8} maxLength={30000} placeholder={"Angaben gemäß § 5 DDG\nName / Firma\nStraße Nr.\nPLZ Ort\nE-Mail: …"} value={settings.imprintText} onChange={e => set("imprintText", e.target.value)} />
+          </label>
+          <label className="settings-field is-wide">
+            Datenschutzerklärung
+            <textarea className="input" rows={10} maxLength={100000} value={settings.privacyText} onChange={e => set("privacyText", e.target.value)} />
+            <span className="field-hint">Jede Zeile wird als eigener Absatz angezeigt. Leere Texte werden im Footer nicht verlinkt.</span>
+          </label>
+        </div>
+        </Fold>
+
         <Fold title="Ticketpreis">
         <div className="settings-fields">
           {field("ticketPrice", "Ticketpreis in € (netto, zzgl. Steuern)", "text", false, {

@@ -56,7 +56,42 @@ body {
 
 body {
   min-height: 100vh;
-  background: var(--bg);
+  /* Transparent so the fixed graffiti layer below shows through (html keeps --bg). */
+  background: transparent;
+}
+
+/* ---------- Dynamic background (graffiti, slowly drifting) ---------- */
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+body::before {
+  inset: -6%;
+  background: var(--bg) url("/bg-graffiti.webp") center / cover no-repeat;
+  opacity: 0.55;
+  animation: bg-drift 60s ease-in-out infinite alternate;
+  will-change: transform;
+}
+/* Dark vignette keeps text and forms readable on top of the image. */
+body::after {
+  background:
+    radial-gradient(ellipse at center, rgba(2, 2, 3, 0.35) 0%, rgba(2, 2, 3, 0.8) 75%, rgba(2, 2, 3, 0.95) 100%),
+    linear-gradient(180deg, rgba(2, 2, 3, 0.2) 0%, rgba(2, 2, 3, 0.6) 100%);
+}
+@keyframes bg-drift {
+  0% { transform: scale(1) translate3d(0, 0, 0); filter: hue-rotate(0deg); }
+  50% { transform: scale(1.06) translate3d(-1.5%, 1%, 0); filter: hue-rotate(-12deg); }
+  100% { transform: scale(1.1) translate3d(1.5%, -1.5%, 0); filter: hue-rotate(10deg); }
+}
+@media (max-width: 960px) {
+  body::before { background-image: url("/bg-graffiti-960.webp"); }
+}
+@media (prefers-reduced-motion: reduce) {
+  body::before { animation: none; }
 }
 
 button,
@@ -144,8 +179,36 @@ a {
   text-decoration: none;
   transition: color 0.2s;
 }
-.site-footer a:hover {
+.site-footer a:hover,
+.footer-link:hover {
   color: var(--text);
+}
+.site-footer {
+  flex-wrap: wrap;
+  background: rgba(2, 2, 3, 0.7);
+}
+.footer-item {
+  display: contents;
+}
+.footer-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: inherit;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.2s;
+}
+.legal-text {
+  max-height: 65vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+.legal-text p {
+  margin: 0 0 0.8em;
 }
 
 /* ---------- Event header ---------- */
@@ -198,11 +261,31 @@ a {
   margin: 0;
   line-height: 0;
   animation: heroIn 1s var(--ease) both;
+  /* Blend on the animated wrapper itself: its animation creates a stacking context, so a blend
+     on the <img> inside would only see transparency and show the logo's black square. */
+  mix-blend-mode: lighten;
 }
 .hero-logo img {
   width: min(440px, 78vw);
   height: auto;
-  mix-blend-mode: lighten;
+  /* Soft edge: the remaining black fades out into the background instead of ending in a hard square. */
+  -webkit-mask-image: radial-gradient(closest-side, #000 78%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 78%, transparent 100%);
+}
+/* Black halo behind the logo that flows smoothly into the graffiti background. */
+.hero::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: min(820px, 150vw);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(closest-side, rgba(2, 2, 3, 0.92) 0%, rgba(2, 2, 3, 0.75) 45%, rgba(2, 2, 3, 0.35) 72%, transparent 100%);
+  pointer-events: none;
+}
+.hero > :not(.scroll-hint) {
+  position: relative;
 }
 .hero-meta {
   margin: 0;
@@ -932,6 +1015,8 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   height: auto;
   margin: 28px auto -12px;
   mix-blend-mode: lighten;
+  -webkit-mask-image: radial-gradient(closest-side, #000 78%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 78%, transparent 100%);
 }
 .login-container {
   max-width: 460px;

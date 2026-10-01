@@ -2510,3 +2510,8 @@ input[type="date"]::-webkit-calendar-picker-indicator {
   .regform-grid { grid-template-columns: 70px 1fr; }
   .regform-color { grid-column: 1 / -1; }
 }
+
+/* Login on a deploy preview */
+.login-preview-note { margin: 24px 0 -10px; text-align: left; }
+.login-preview-note p { margin: 6px 0 0; }
+.login-preview-note a { color: var(--purple-300); }

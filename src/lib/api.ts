@@ -86,6 +86,12 @@ export interface Registration {
   paymentRef: string | null;
 }
 
+/** Where the login runs: deploy previews use a copy of the live data. */
+export interface LoginEnvironment {
+  preview: boolean;
+  liveUrl: string;
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -151,7 +157,13 @@ export const api = {
   registrationForm: () => request<{ form: RegistrationForm }>("/api/admin/registration-form"),
   saveRegistrationForm: (form: RegistrationForm) => request<{ form: RegistrationForm }>("/api/admin/registration-form", { method: "PUT", body: JSON.stringify({ form }) }),
 
-  session: () => request<{ authenticated: boolean; user?: AdminIdentity }>("/api/admin/session"),
+  session: () => request<{ authenticated: boolean; user?: AdminIdentity; environment?: LoginEnvironment }>("/api/admin/session"),
+  /** Like session(), but a 401 (logged out) still returns the environment info for the login page. */
+  loginEnvironment: () =>
+    fetch("/api/admin/session", { credentials: "same-origin", cache: "no-store" })
+      .then((r) => r.json())
+      .then((d: { environment?: LoginEnvironment }) => d.environment ?? null)
+      .catch(() => null),
   login: (username: string, password: string) => sealedRequest<{ ok: true; user: AdminIdentity }>("/api/admin/login", "POST", { username, password }),
   logout: () => request<{ ok: true }>("/api/admin/logout", { method: "POST" }),
   changePassword: (currentPassword: string, password: string, passwordConfirm: string) =>

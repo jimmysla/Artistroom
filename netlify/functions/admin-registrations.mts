@@ -15,6 +15,7 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 import { randomUUID } from "node:crypto";
 import { categoriesOf, getEvent } from "../lib/event.js";
+import { SoldOutError, isAccepted, lockTickets, reserveTickets, ticketAvailability } from "../lib/tickets.js";
 import { parseExtra, type CategoryBlock } from "../../shared/site.js";
 import { buildStatusMail, checkMailConfig, sendMail, sendStatusMail, MailError } from "../lib/mail.js";
 
@@ -165,6 +166,14 @@ export default async (req: Request, context: Context) => {
 
       if (body?.confirmEmail !== true || !Number.isInteger(body?.revision)) return error("Bitte den E-Mail-Versand bestätigen.", 422);
       const event = await getEvent();
+      // Approving takes a ticket; refused early (no mail config needed) when sold out – the binding
+      // check runs again under the ticket lock inside the transaction below.
+      const approving = isAccepted(status);
+      if (approving) {
+        const [current] = await db.select({ status: registrations.status }).from(registrations).where(eq(registrations.id, id));
+        const tickets = await ticketAvailability(event);
+        if (current && !isAccepted(current.status) && tickets.soldOut) return error(new SoldOutError(tickets.max!, tickets.taken!).message, 409, { soldOut: true });
+      }
       // Only a payment request carries an amount – always the ticket price from the settings
       // (Einstellungen → Ticketpreis), never an amount sent by the browser.
       let amountCents: number | null = null;
@@ -192,6 +201,8 @@ export default async (req: Request, context: Context) => {
       // Persist a stable opaque ticket before sending, including across failed send attempts.
       await db.update(registrations).set({ ticketToken: sql`coalesce(${registrations.ticketToken}, ${randomUUID()})` }).where(eq(registrations.id, id));
       const result = await db.transaction(async (tx) => {
+        // Ticket lock first (same order everywhere), so concurrent approvals are counted one after another.
+        if (approving) await lockTickets(tx);
         const [locked] = await tx.select().from(registrations).where(eq(registrations.id, id)).for("update");
         if (!locked) return error("Anmeldung nicht gefunden.", 404);
         const old = await openRegistration(locked);
@@ -199,6 +210,15 @@ export default async (req: Request, context: Context) => {
         if (old.checkedInAt) return error("Bereits eingecheckte Anmeldungen können nicht mehr umgestellt werden.", 409);
         if (old.status === "zahlung_angefordert" && old.paymentProvider) return error(`Es wird auf die Zahlungsbestätigung ${old.paymentProvider === "stripe" ? "von Stripe" : old.paymentProvider === "paypal" ? "von PayPal" : "(Stripe/PayPal)"} gewartet – bis dahin ist der Status gesperrt. Abbrechen nur über das Logging.`, 409);
         if (isFinalStatus(old.status)) return error(hasTicket(old.status) ? "Für diese Anmeldung wurde bereits ein Ticket ausgestellt – der Status ist gesperrt. Ein Fehler lässt sich nur im Logging rückgängig machen." : "Diese Anmeldung wurde abgelehnt – der Status ist gesperrt. Ein Fehler lässt sich nur im Logging rückgängig machen.", 409);
+        if (approving && !isAccepted(old.status)) {
+          try {
+            await reserveTickets(tx);
+          } catch (err) {
+            if (!(err instanceof SoldOutError)) throw err;
+            await logAction({ username: actor, action: "status_fehlgeschlagen", target: target(old), details: `${statusText(status, amountCents)} · ${err.message}`, registrationId: id });
+            return error(err.message, 409, { soldOut: true });
+          }
+        }
         const next = { ...old, status, amountCents, revision: old.revision + 1 };
         try {
           await sendStatusMail(next, settings);
@@ -225,6 +245,7 @@ export default async (req: Request, context: Context) => {
     return error("Methode nicht erlaubt.", 405);
   } catch (err) {
     if (err instanceof MailError) return error(err.message, 502);
+    if (err instanceof SoldOutError) return error(err.message, 409, { soldOut: true });
     if (err instanceof TransportError) return error(err.message, 400);
     console.error("Admin registrations operation failed");
     return error("Die Daten konnten nicht geladen werden.", 500);

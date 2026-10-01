@@ -12,7 +12,7 @@ import Footer from "../components/Footer";
 import InfoBox from "../components/InfoBox";
 import { api, ApiError, REGISTRATION_CHANNEL } from "../lib/api";
 import { useReveal } from "../lib/useReveal";
-import { EventMeta, useEvent, useForm } from "../lib/event";
+import { EventMeta, announceEventChange, useEvent, useForm } from "../lib/event";
 import { MAX_CUSTOM_ANSWER, customFields, enabledCategories, fieldEnabled, formCategories, validateCustomAnswers, type FormConfig } from "../../shared/site";
 import { eventDate, welcomeText } from "../../shared/event";
 import {
@@ -119,7 +119,11 @@ export default function RegisterPage() {
   const categoryValid = enabledCategories(form).some((c) => c.id === data.category);
   // The page background glows in the configured colour of the chosen category (theme purple if none).
   const chosen = categories.find((c) => c.id === (submitted?.category ?? data.category) && (c.enabled || submitted));
-  const glowColor = formOpen && chosen ? chosen.color || "#8b5cf6" : "";
+  // Ticket limit reached: the form stays visible but greyed out with „Ausverkauft“ (server refuses too).
+  // A confirmation that was just shown is never replaced.
+  const soldOut = Boolean(event?.soldOut) && step !== 4;
+  const showForm = formOpen || soldOut;
+  const glowColor = formOpen && !soldOut && chosen ? chosen.color || "#8b5cf6" : "";
   useEffect(() => {
     if (event) document.title = `${event.name} – Anmeldung · ${eventDate(event)}, ${event.location}`;
   }, [event]);
@@ -180,6 +184,7 @@ export default function RegisterPage() {
     if (!categoryValid) return setStep(1);
     if (!detailsValid) return setStep(2);
     if (!mediaConsent) return setConsentError(true);
+    if (soldOut) return;
 
     setSubmitting(true);
     setSubmitError(null);
@@ -203,6 +208,8 @@ export default function RegisterPage() {
     } catch (err) {
       if (err instanceof ApiError) {
         setSubmitError(err.message);
+        // e.g. sold out in the meantime → reload the event state so the form greys out.
+        if (err.status === 409 && !err.fieldErrors) announceEventChange();
         if (err.fieldErrors) {
           setServerErrors(err.fieldErrors as Record<string, string>);
           // Errors on editable fields are fixed on the data step (category on step 1).
@@ -241,14 +248,27 @@ export default function RegisterPage() {
 
       <section ref={ctaRef} className={`cta-section ${ctaVisible ? "is-visible" : ""}`} aria-labelledby="cta-heading">
         <Welcome />
-        <Button className="cta-button" onClick={openForm}>
-          Zur Anmeldung
-        </Button>
+        {soldOut ? (
+          <Button className="cta-button cta-sold-out" disabled aria-describedby="sold-out-note">
+            Ausverkauft
+          </Button>
+        ) : (
+          <Button className="cta-button" onClick={openForm}>
+            Zur Anmeldung
+          </Button>
+        )}
       </section>
 
-      {formOpen && (
-      <main className="container form-section" ref={formRef} id="anmeldung">
-        <EventHeader onBack={step === 2 || step === 3 ? goBack : undefined} />
+      {showForm && (
+      <main className={`container form-section ${soldOut ? "is-sold-out" : ""}`} ref={formRef} id="anmeldung">
+        <EventHeader onBack={!soldOut && (step === 2 || step === 3) ? goBack : undefined} />
+        {soldOut && (
+          <div className="sold-out-banner" id="sold-out-note" role="status">
+            <strong>Ausverkauft</strong>
+            <span>Alle Tickets sind vergeben – eine Anmeldung ist leider nicht mehr möglich.</span>
+          </div>
+        )}
+        <div className="sold-out-wrap" inert={soldOut || undefined} aria-hidden={soldOut || undefined}>
         <Stepper current={step} labels={STEP_LABELS} />
 
         {step === 1 && (
@@ -460,6 +480,7 @@ export default function RegisterPage() {
             </Button>
           </section>
         )}
+        </div>
       </main>
       )}
       <Footer />

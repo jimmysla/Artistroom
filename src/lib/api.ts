@@ -34,6 +34,8 @@ export interface AdminSettings {
   mailProvider: "smtp" | "resend" | null;
   mailConfigured: boolean;
   paymentProviders: { stripe: boolean; paypal: boolean };
+  /** Ticket limit: max null = unlimited; taken = accepted registrations (only counted with a limit). */
+  tickets: { max: number | null; taken: number | null; soldOut: boolean };
 }
 
 export interface AdminAccount {

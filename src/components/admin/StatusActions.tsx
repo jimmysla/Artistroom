@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
 import ConfirmDialog from "./ConfirmDialog";
 import { statusLabel } from "../../../shared/registration";
 import Spinner from "../Spinner";
-import { formatNet, hasTicket, parseEuroToCents } from "../../../shared/registration";
+import { formatNet, hasTicket, matchesStatus, parseEuroToCents } from "../../../shared/registration";
 import { api, ApiError, type Registration } from "../../lib/api";
 import { useEvent } from "../../lib/event";
 
@@ -10,6 +10,9 @@ interface Props {
   registration: Registration;
   onChange: (status: string, amountCents?: number) => Promise<void>;
 }
+
+/** Places taken by accepted registrations, provided by the dashboard (null = not loaded). */
+export const TicketsTakenContext = createContext<number | null>(null);
 
 type Action = "kostenlos" | "zahlung_angefordert" | "bezahlt" | "abgelehnt" | "ausstehend";
 
@@ -19,7 +22,15 @@ export default function StatusActions({ registration: r, onChange }: Props) {
   const [sendError, setSendError] = useState("");
   const [busy, setBusy] = useState<Action | null>(null);
   // The amount is always the ticket price from the settings (the server uses it too) – no price field.
-  const ticketCents = parseEuroToCents(useEvent()?.ticketPrice ?? "");
+  const event = useEvent();
+  const ticketCents = parseEuroToCents(event?.ticketPrice ?? "");
+  // Ticket limit (Einstellungen → Tickets): when reached, nobody else can be approved (server checks too).
+  const maxTickets = event?.ticketLimit ?? null;
+  const taken = useContext(TicketsTakenContext);
+  // Someone who already holds a place (legacy manual payment request) doesn't need a new one.
+  const holdsPlace = matchesStatus(r.status, "angenommen");
+  const soldOut = maxTickets != null && !holdsPlace && (taken != null ? taken >= maxTickets : Boolean(event?.soldOut));
+  const soldOutTitle = soldOut ? `Ausverkauft – ${taken ?? maxTickets} von ${maxTickets} Tickets vergeben` : undefined;
 
   const run = (status: Action, amountCents?: number) => { setSendError(""); setConfirmation({ status, amountCents }); };
   const confirm = async () => {
@@ -65,14 +76,15 @@ export default function StatusActions({ registration: r, onChange }: Props) {
 
   return (
     <div className="status-actions" role="group" aria-label={`Status für ${r.name}`}>
-      {button("kostenlos", "🎁 Kostenlos", "action-free")}
+      {soldOut && <p className="status-sold-out" role="status">🚫 Ausverkauft · {taken ?? maxTickets} von {maxTickets} Tickets vergeben – es kann niemand mehr genehmigt werden. Limit unter Einstellungen → Tickets.</p>}
+      {button("kostenlos", "🎁 Kostenlos", "action-free", undefined, soldOut, soldOutTitle)}
       {button(
         "zahlung_angefordert",
         ticketCents ? `💳 Zahlung anfordern · ${formatNet(ticketCents)}` : "💳 Zahlung anfordern",
         "action-request",
-        () => ticketCents && run("zahlung_angefordert", ticketCents),
-        !ticketCents,
-        ticketCents ? undefined : "Zuerst unter Einstellungen → Ticketpreis einen Preis hinterlegen",
+        () => ticketCents && !soldOut && run("zahlung_angefordert", ticketCents),
+        !ticketCents || soldOut,
+        soldOutTitle ?? (ticketCents ? undefined : "Zuerst unter Einstellungen → Ticketpreis einen Preis hinterlegen"),
       )}
       {!ticketCents && <span className="muted small">Kein Ticketpreis hinterlegt – unter Einstellungen → Ticketpreis eintragen.</span>}
       {button("abgelehnt", "❌ Ablehnen", "action-reject")}

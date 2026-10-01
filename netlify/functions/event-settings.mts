@@ -7,6 +7,7 @@ import { requireAdmin } from "../lib/auth.js";
 import { logAction } from "../lib/audit.js";
 import { TransportError, readSealed, seal } from "../lib/crypto.js";
 import { formOf, getEvent } from "../lib/event.js";
+import { ticketAvailability } from "../lib/tickets.js";
 import { normalizeLegal } from "../../shared/site.js";
 import { describeProductChanges, describeSurveyChanges, describeTemplateChanges } from "../lib/diff.js";
 import { createTestCheckout } from "../lib/test-checkout.js";
@@ -19,7 +20,7 @@ import type { Registration } from "../../db/schema.js";
 import { json, error, str, logError } from "../lib/http.js";
 const LABELS: Record<keyof typeof DEFAULT_EVENT, string> = {
   name: "Name", date: "Datum", time: "Uhrzeit", location: "Ort", senderEmail: "Absenderadresse", senderName: "Absendername", paymentUrl: "Zahlungslink", welcomeText: "Startseiten-Text", welcomeImage: "Startseiten-Bild", paymentProvider: "Zahlungsart",
-  ticketPrice: "Ticketpreis", smtpHost: "SMTP-Server", smtpPort: "SMTP-Port", smtpSecurity: "SMTP-Verschlüsselung", smtpUser: "SMTP-Benutzer", smtpPassword: "SMTP-Passwort",
+  ticketPrice: "Ticketpreis", maxTickets: "Maximale Ticketanzahl", smtpHost: "SMTP-Server", smtpPort: "SMTP-Port", smtpSecurity: "SMTP-Verschlüsselung", smtpUser: "SMTP-Benutzer", smtpPassword: "SMTP-Passwort",
   stripeSecretKey: "Stripe-Secret-Key", paypalClientId: "PayPal-Client-ID", paypalClientSecret: "PayPal-Secret", paypalMode: "PayPal-Modus",
 };
 const SECURITY = ["starttls", "ssl"];
@@ -35,6 +36,8 @@ const forAdmin = async (s: EventSettings & { mailTemplates?: unknown; survey?: u
   survey: normalizeSurvey(s.survey),
   product: normalizeProduct(s.product),
   surveySentAt: s.surveySentAt ?? null,
+  // Ticket limit status for the hint in Einstellungen → Tickets.
+  tickets: await ticketAvailability(s),
   smtpPasswordSet: Boolean(s.smtpPassword),
   mailProvider: mailProvider(s),
   mailConfigured: Boolean(mailProvider(s) && s.senderEmail),
@@ -103,7 +106,9 @@ export default async (req: Request) => {
       const s = await getEvent();
       if (admin) return json(await forAdmin(s));
       const legal = normalizeLegal("legal" in s ? s.legal : null);
-      return json({ settings: { name: s.name, date: s.date, time: s.time, location: s.location, ticketPrice: s.ticketPrice, welcomeText: s.welcomeText, welcomeImage: s.welcomeImage, form: formOf(s), legalPages: { impressum: Boolean(legal.impressum), datenschutz: Boolean(legal.datenschutz) } } });
+      // Only the limit and the sold-out flag are public, never the number of approved people.
+      const { max, soldOut } = await ticketAvailability(s);
+      return json({ settings: { name: s.name, date: s.date, time: s.time, location: s.location, ticketPrice: s.ticketPrice, welcomeText: s.welcomeText, welcomeImage: s.welcomeImage, form: formOf(s), legalPages: { impressum: Boolean(legal.impressum), datenschutz: Boolean(legal.datenschutz) }, ticketLimit: max, soldOut } });
     }
     if (!session || req.method !== "PUT") return error("Methode nicht erlaubt.", 405);
     // Whole body (incl. SMTP password) arrives encrypted from the browser.
@@ -137,6 +142,10 @@ export default async (req: Request) => {
       const cents = parseEuroToCents(s.ticketPrice);
       if (cents == null) return error("Ticketpreis: bitte nur eine Zahl eingeben, z. B. 15 oder 12,50.", 422);
       s.ticketPrice = (cents / 100).toFixed(cents % 100 ? 2 : 0).replace(".", ",");
+    }
+    if (changed("maxTickets") && s.maxTickets) {
+      if (!/^\d{1,6}$/.test(s.maxTickets) || +s.maxTickets < 1) return error("Maximale Ticketanzahl: bitte eine ganze Zahl ab 1 eintragen (leer = unbegrenzt).", 422);
+      s.maxTickets = String(+s.maxTickets);
     }
     const smtpChanged = changed("smtpHost", "smtpPort", "smtpSecurity", "smtpUser");
     if (smtpChanged && s.smtpHost && !/^[a-zA-Z0-9.-]{3,253}$/.test(s.smtpHost)) return error("Bitte einen gültigen SMTP-Server eintragen, z. B. smtp.example.de.", 422);

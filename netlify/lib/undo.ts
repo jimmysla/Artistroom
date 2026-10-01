@@ -8,6 +8,7 @@ import { logAction } from "./audit.js";
 import { openRegistration } from "./pii.js";
 import { getEvent } from "./event.js";
 import { sendStatusMail } from "./mail.js";
+import { SoldOutError, isAccepted, reserveTickets } from "./tickets.js";
 
 /*
  * Undo data stored with an audit log entry (server-only, never sent to the browser).
@@ -116,6 +117,7 @@ export async function undoLogEntry(logId: number, admin: AdminIdentity, options:
     });
   } catch (err) {
     if (err instanceof DryRun) return "ok";
+    if (err instanceof SoldOutError) throw new UndoError(`Wiederherstellung nicht möglich – ${err.message}`);
     throw err;
   }
 
@@ -135,6 +137,8 @@ export async function undoLogEntry(logId: number, admin: AdminIdentity, options:
         if (!row) throw new UndoError("Die Anmeldung existiert nicht mehr.");
         if (row.revision !== undo.revision) throw new UndoError("Die Anmeldung wurde seitdem erneut geändert. Bitte zuerst die neuere Aktion rückgängig machen.");
         if (row.checkedInAt) throw new UndoError(`Konflikt: ${target(row)} ist bereits eingecheckt (seit ${berlinTime(row.checkedInAt)} Uhr). Zuerst den Check-in rückgängig machen.`);
+        // Restoring an accepted status takes a ticket again – never beyond the limit.
+        if (isAccepted(undo.before.status) && !isAccepted(row.status)) await reserveTickets(tx);
         const next = { ...row, status: undo.before.status, amountCents: undo.before.amountCents, revision: row.revision + 1 };
         if (options.notify && !options.dryRun) await sendStatusMail(next, await getEvent());
         const [updatedRow] = await tx
@@ -154,6 +158,7 @@ export async function undoLogEntry(logId: number, admin: AdminIdentity, options:
         const row = reviveRegistration(undo.row);
         const [taken] = await tx.select({ id: registrations.id }).from(registrations).where(eq(registrations.id, row.id));
         if (taken) throw new UndoError(`Die Nummer ${formatRegistrationNumber(row.id)} ist inzwischen neu vergeben – Wiederherstellung nicht möglich.`);
+        if (isAccepted(row.status)) await reserveTickets(tx);
         await tx.insert(registrations).values(row);
         await syncRegistrationSequence(tx);
         const shown = target(await openRegistration(row));
@@ -164,6 +169,7 @@ export async function undoLogEntry(logId: number, admin: AdminIdentity, options:
         if (rows.length) {
           const taken = await tx.select({ id: registrations.id }).from(registrations).where(inArray(registrations.id, rows.map((r) => r.id)));
           if (taken.length) throw new UndoError(`Seit dem Löschen sind ${taken.length} neue Anmeldung(en) mit denselben Nummern eingegangen – Wiederherstellung nicht möglich.`);
+          await reserveTickets(tx, rows.filter((r) => isAccepted(r.status)).length);
           for (let i = 0; i < rows.length; i += 500) await tx.insert(registrations).values(rows.slice(i, i + 500));
           await syncRegistrationSequence(tx);
         }

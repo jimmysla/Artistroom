@@ -185,6 +185,11 @@ export default function RegisterPage() {
     setSubmitError(null);
     try {
       const res = await api.register({ ...visible, mediaConsent, website: honeypot });
+      // Without an id nothing was stored (e.g. honeypot hit) – never show a confirmation without a number.
+      if (!Number.isInteger(res.id) || res.id <= 0) {
+        setSubmitError("Deine Anmeldung konnte nicht gespeichert werden. Bitte lade die Seite neu und versuche es noch einmal.");
+        return;
+      }
       setSubmitted({ ...visible, id: res.id });
       sessionStorage.removeItem(STORAGE_KEY);
       try {
@@ -327,13 +332,19 @@ export default function RegisterPage() {
                   </div>
                 );
               })}
-              {/* Honeypot – hidden from humans and assistive tech */}
+              {/* Honeypot – hidden from humans and assistive tech. Deliberately a meaningless name (not
+                  "website"/"url"), so browser autofill and password managers never fill it for real people –
+                  a filled honeypot makes the server silently drop the registration. */}
               <input
                 className="hp-field"
                 type="text"
-                name="website"
+                name="ar_hp_7f3k"
                 tabIndex={-1}
                 autoComplete="off"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                data-bwignore="true"
+                data-form-type="other"
                 aria-hidden="true"
                 value={honeypot}
                 onChange={(e) => setHoneypot(e.target.value)}

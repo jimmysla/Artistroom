@@ -45,6 +45,7 @@ Artistroom is a German-language event registration SPA with a protected admin da
 - Dashboard filtering/sorting/stats are client-side (fetches all rows); fine for event-scale data.
 - Live updates: dashboard polls every 15s while visible, plus a `BroadcastChannel` ping from the registration page in the same browser.
 - Registration draft is kept in `sessionStorage` so a reload doesn't lose input.
+- Honeypot: the hidden input has a meaningless DOM name (`ar_hp_7f3k`, plus password-manager ignore attributes) but is still sent as `website` in the body. Never give it an autofill-prone name like `website`/`url` – Safari/Chrome AutoFill or password managers fill it, the server then fakes success without storing (no id → no Anmeldenummer). The client treats a response without a numeric `id` as an error.
 - CSV export uses `;` separator + BOM (German Excel) and neutralises formula injection.
 - Registration fields: Vorname, Nachname, Künstlername/Stagename (stored in `name`, used everywhere as display name), E-Mail, Instagram/TikTok (URL or handle accepted, stored as bare handle without `@`; build links with `instagramUrl`/`tiktokUrl`), `referred_by`, `city`. New columns are nullable for old rows.
 - Registration number (`#0001`) is the serial `id` formatted via `formatRegistrationNumber` – not a separate column.

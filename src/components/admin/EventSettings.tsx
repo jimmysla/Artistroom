@@ -241,7 +241,7 @@ export default function EventSettings({ isSuper, registrationCount, onReset }: P
           {field("ticketPrice", "Ticketpreis in € (netto, zzgl. Steuern)", "text", false, {
             placeholder: "z. B. 15",
             inputMode: "decimal",
-            hint: <>💡 Hinweis: Nur die Zahl eintragen (z. B. <strong>15</strong> oder <strong>12,50</strong>), ohne €-Zeichen. Der Betrag wird unter „Anmeldungen verwalten“ beim Anfordern einer Zahlung automatisch vorausgefüllt.</>,
+            hint: <>💡 Hinweis: Nur die Zahl eintragen (z. B. <strong>15</strong> oder <strong>12,50</strong>), ohne €-Zeichen. Genau dieser Betrag wird bei „Zahlung anfordern“ automatisch verwendet – ohne Preisfeld. Ohne Ticketpreis kann keine Zahlung angefordert werden.</>,
           })}
         </div>{partBar("price")}</Fold>
 
